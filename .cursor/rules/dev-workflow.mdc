@@ -1,0 +1,11 @@
+---
+description: Photo Edit — single server on :7860
+alwaysApply: true
+---
+
+# Photo Edit
+
+- Run: `prod.bat` → http://127.0.0.1:7860
+- Log: `logs/photo-edit.log`
+- Do not restart during GPU generation unless the user asks.
+- Queue flow: draft → prepare → approve → start GPU (model in modal).

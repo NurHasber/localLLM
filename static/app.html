@@ -1,0 +1,1900 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <title>Photo Edit — очередь</title>
+  <!-- ui-build: 2026-08-19-job-thumbs -->
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <style>
+    :root {
+      --bg: #0f1117;
+      --panel: #171a22;
+      --border: #2a3040;
+      --text: #e8ecf4;
+      --muted: #8b93a7;
+      --accent: #5b8def;
+      --ok: #3ecf8e;
+      --warn: #e8b84a;
+      --err: #f07178;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.45 system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+    header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+    .badge {
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #252a36;
+      color: var(--muted);
+    }
+    .badge.busy { background: #3d2e14; color: var(--warn); }
+    .badge.ok { background: #1a3328; color: var(--ok); }
+    main {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    section h2 {
+      margin: 0 0 0.75rem;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
+    button, .btn {
+      font: inherit;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: #222733;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 0.45rem 0.85rem;
+    }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.danger { border-color: #6b3038; color: var(--err); }
+    .empty { color: var(--muted); font-size: 13px; padding: 0.5rem 0; }
+    .job {
+      display: grid;
+      grid-template-columns: 56px 1fr auto;
+      gap: 0.75rem;
+      align-items: start;
+      padding: 0.65rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .job:last-child { border-bottom: none; }
+    .job img.thumb {
+      width: 56px; height: 56px;
+      object-fit: cover;
+      border-radius: 6px;
+      background: #0a0c10;
+    }
+    .preview-thumb {
+      cursor: zoom-in;
+    }
+    .preview-thumb:hover,
+    .preview-thumb:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .draft-form .draft-preview .preview-thumb {
+      width: 64px;
+      height: 64px;
+      object-fit: cover;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+    .job.has-compare,
+    .job.has-thumbs {
+      grid-template-columns: auto 1fr auto;
+    }
+    .job-compare,
+    .job-thumbs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .job-thumbs {
+      max-width: 220px;
+    }
+    .job-compare figure,
+    .job-thumbs figure {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+    }
+    .job-compare figcaption,
+    .job-thumbs figcaption {
+      font-size: 10px;
+      color: var(--muted);
+      line-height: 1;
+      max-width: 56px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .job-thumbs img.thumb {
+      width: 48px;
+      height: 48px;
+    }
+    .job .meta { min-width: 0; }
+    .job .name { font-weight: 500; margin-bottom: 2px; }
+    .job .msg { font-size: 12px; color: var(--muted); }
+    .job .prompt { font-size: 12px; color: #b8c0d4; margin-top: 4px; word-break: break-word; }
+    .job .actions { display: flex; flex-direction: column; gap: 4px; }
+    .job.gpu-queued {
+      background: rgba(91, 141, 239, 0.1);
+      border-left: 3px solid var(--accent);
+      border-radius: 8px;
+      padding: 0.65rem 0.65rem 0.65rem 0.5rem;
+      margin: 0 -0.35rem;
+    }
+    .job.paused {
+      background: rgba(232, 184, 74, 0.1);
+      border-left: 3px solid var(--warn);
+      border-radius: 8px;
+      padding: 0.65rem 0.65rem 0.65rem 0.5rem;
+      margin: 0 -0.35rem;
+    }
+    .job.was-cancelled {
+      background: rgba(232, 107, 107, 0.08);
+      border-left: 3px solid var(--err);
+      border-radius: 8px;
+      padding: 0.65rem 0.65rem 0.65rem 0.5rem;
+      margin: 0 -0.35rem;
+    }
+    .job .cancelled-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--err);
+      background: rgba(232, 107, 107, 0.15);
+      border-radius: 4px;
+      padding: 1px 6px;
+      margin-bottom: 4px;
+    }
+    .job .requeue-edit {
+      margin-top: 6px;
+      display: grid;
+      gap: 0.35rem;
+    }
+    .job .requeue-edit label {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .job .requeue-edit textarea {
+      width: 100%;
+      min-height: 3.5rem;
+      resize: vertical;
+      font: inherit;
+      font-size: 12px;
+      padding: 0.4rem 0.5rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #1a1f2a;
+      color: inherit;
+    }
+    .job .requeue-edit button {
+      justify-self: start;
+      font-size: 12px;
+      padding: 0.3rem 0.6rem;
+    }
+    .job .pause-step {
+      font-size: 12px;
+      color: var(--warn);
+      margin-top: 4px;
+      font-weight: 500;
+    }
+    .running-head {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+    }
+    .running-head img.thumb {
+      width: 56px;
+      height: 56px;
+      flex-shrink: 0;
+    }
+    .running-head .job-thumbs {
+      max-width: none;
+    }
+    .running-head .job-thumbs img.thumb {
+      width: 56px;
+      height: 56px;
+    }
+    .running-head .job-meta {
+      min-width: 0;
+    }
+    .running-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .order-btns { display: flex; gap: 2px; }
+    button.icon-btn {
+      padding: 0.25rem 0.45rem;
+      min-width: 2rem;
+      font-size: 13px;
+      line-height: 1;
+    }
+    .draft-form {
+      display: grid;
+      gap: 0.5rem;
+      padding: 0.75rem;
+      margin-bottom: 0.5rem;
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+    }
+    .draft-form .draft-head {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+    }
+    .draft-form .draft-preview {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      min-height: 72px;
+      padding: 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #0a0c10;
+    }
+    .draft-form .draft-preview img {
+      width: 64px;
+      height: 64px;
+      object-fit: cover;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+    .draft-form .draft-preview .placeholder {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .draft-form .draft-preview .uploading {
+      color: var(--warn);
+      font-size: 0.85rem;
+    }
+    .draft-form .draft-head img {
+      width: 48px;
+      height: 48px;
+      object-fit: cover;
+      border-radius: 6px;
+      background: #0a0c10;
+    }
+    .draft-form .draft-ref {
+      margin-top: 0.35rem;
+      padding: 0.5rem 0.65rem;
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .draft-form .draft-ref label {
+      display: block;
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+    .draft-form .draft-ref-head {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.35rem;
+      font-size: 0.85rem;
+    }
+    .draft-form .draft-ref-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      margin-bottom: 0.45rem;
+    }
+    .draft-form .draft-ref-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+    }
+    .draft-form .draft-ref-item .ref-meta {
+      min-width: 0;
+      flex: 1;
+    }
+    .draft-form .draft-ref-item .ref-meta strong {
+      display: block;
+    }
+    .draft-form .draft-ref-item .ref-meta span {
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+    .draft-form .draft-ref-item button {
+      padding: 0.25rem 0.55rem;
+      font-size: 12px;
+    }
+    .draft-form .draft-ref-head img,
+    .draft-form .draft-ref-item img {
+      width: 40px;
+      height: 40px;
+      object-fit: cover;
+      border-radius: 6px;
+      background: #0a0c10;
+    }
+    .draft-form .ref-hint {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-top: 0.25rem;
+      line-height: 1.35;
+    }
+    .draft-form > label {
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    .job .ref-thumb {
+      outline: 1px dashed var(--accent);
+    }
+    textarea, input[type="text"], select {
+      width: 100%;
+      font: inherit;
+      background: #0f1219;
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 0.5rem 0.65rem;
+    }
+    textarea { min-height: 64px; resize: vertical; }
+    .running {
+      display: grid;
+      gap: 0.75rem;
+    }
+    .progress-bar {
+      height: 8px;
+      background: #0a0c10;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .progress-bar > div {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 0.3s;
+    }
+    .log {
+      max-height: 280px;
+      overflow: auto;
+      overflow-anchor: none;
+      font-size: 12px;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+      padding-top: 0.5rem;
+      margin: 0;
+      list-style: none;
+    }
+    .running-step {
+      font-size: 13px;
+      color: var(--text);
+      padding: 0.55rem 0;
+      margin-bottom: 0.35rem;
+      border-bottom: 1px solid var(--border);
+      line-height: 1.4;
+    }
+    .running-step .step-num {
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .log li { padding: 2px 0; }
+    .log .log-time {
+      display: inline-block;
+      min-width: 9.2rem;
+      color: #5a6478;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      margin-right: 0.35rem;
+    }
+    .log .tag {
+      display: inline-block;
+      min-width: 4.5rem;
+      color: #6d7890;
+    }
+    .log .ckpt {
+      display: inline-block;
+      margin-left: 0.35rem;
+      padding: 0 0.35rem;
+      border-radius: 4px;
+      background: #1a3328;
+      color: var(--ok);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .modal-bg {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 1rem;
+    }
+    .modal-bg.open { display: flex; }
+    .modal {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      width: min(420px, 100%);
+    }
+    .modal.approve-modal {
+      width: min(1100px, calc(100vw - 2rem));
+    }
+    .modal.gpu-modal {
+      width: min(1100px, calc(100vw - 2rem));
+    }
+    .modal h3 { margin: 0 0 1rem; }
+    .modal .row { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
+    .approve-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin: 0.35rem 0 0.5rem;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    #approvePrompt {
+      width: 100%;
+      min-height: 22rem;
+      resize: vertical;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .gpu-field {
+      display: grid;
+      gap: 0.35rem;
+      margin-top: 0.85rem;
+    }
+    .gpu-field label {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .gpu-field select {
+      width: 100%;
+      font: inherit;
+      padding: 0.45rem 0.55rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #1a1f2a;
+      color: inherit;
+    }
+    .gpu-hint, .gpu-device {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+      margin: 0;
+    }
+    .gpu-device {
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border);
+    }
+    .gen-times {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+      margin-top: 0.35rem;
+      font-size: 11px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .modal.preview-modal {
+      width: min(1100px, calc(100vw - 2rem));
+    }
+    .preview-frame {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      max-height: min(72vh, 900px);
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #0a0c10;
+      padding: 0.5rem;
+    }
+    .preview-frame img {
+      display: block;
+      max-width: 100%;
+      max-height: min(70vh, 880px);
+      width: auto;
+      height: auto;
+      object-fit: contain;
+    }
+    .toast {
+      position: fixed;
+      bottom: 1rem;
+      right: 1rem;
+      background: #252a36;
+      border: 1px solid var(--border);
+      padding: 0.65rem 1rem;
+      border-radius: 8px;
+      display: none;
+      max-width: 320px;
+      z-index: 200;
+    }
+    .toast.show { display: block; }
+    .toast.err { border-color: var(--err); color: var(--err); }
+    .pager {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      margin-top: 0.75rem;
+      padding-top: 0.5rem;
+      border-top: 1px solid var(--border);
+    }
+    .pager .pager-info {
+      font-size: 13px;
+      color: var(--muted);
+      min-width: 6rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Photo Edit</h1>
+    <span id="statusBadge" class="badge">загрузка…</span>
+  </header>
+
+  <main>
+    <section id="draftsSection">
+      <h2>Черновики</h2>
+      <div class="toolbar">
+        <button type="button" id="addDraftBtn">+ Черновик</button>
+        <button type="button" id="prepareBtn" class="primary" disabled>Подготовить промпты</button>
+      </div>
+      <div id="draftsList"></div>
+    </section>
+
+    <section id="queueSection">
+      <h2>Очередь</h2>
+      <div class="toolbar">
+        <button type="button" id="startGpuBtn" class="primary" disabled>Начать генерацию…</button>
+      </div>
+      <div id="pendingList"></div>
+    </section>
+
+    <section id="runningSection" hidden>
+      <h2>Сейчас</h2>
+      <div id="runningPanel" class="running">
+        <div id="runningTitle" class="running-head"></div>
+        <div class="progress-bar"><div id="runningProgress"></div></div>
+        <div id="runningStep" class="running-step"></div>
+        <ol id="runningLog" class="log"></ol>
+        <div class="running-actions">
+          <button type="button" id="runningPauseBtn">Пауза</button>
+          <button type="button" id="runningLogBtn">log</button>
+          <button type="button" class="danger" id="runningCancelBtn">Отменить задачу</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="doneSection">
+      <h2>Готово</h2>
+      <div id="finishedList"></div>
+      <div id="finishedPager" class="pager" hidden></div>
+    </section>
+  </main>
+
+  <div class="modal-bg" id="approveModal">
+    <div class="modal approve-modal">
+      <h3>Подтвердите промпт</h3>
+      <p id="approveImageName" class="msg"></p>
+      <div class="approve-meta">
+        <span>Проверьте текст перед запуском генерации</span>
+        <strong id="approvePromptCount">0 символов</strong>
+      </div>
+      <textarea id="approvePrompt" rows="5"></textarea>
+      <div class="row">
+        <button type="button" id="approveCancelBtn">Отмена</button>
+        <button type="button" id="approveOkBtn" class="primary">Подтвердить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="confirmGpuModal">
+    <div class="modal">
+      <h3>Добавить в очередь генерации</h3>
+      <p id="confirmGpuText" class="msg"></p>
+      <div class="row">
+        <button type="button" id="confirmGpuCancelBtn">Отмена</button>
+        <button type="button" id="confirmGpuOkBtn" class="primary">Добавить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="gpuModal">
+    <div class="modal gpu-modal">
+      <h3>Модель для генерации</h3>
+      <div class="gpu-field">
+        <label for="gpuModelSelect">Модель</label>
+        <select id="gpuModelSelect"></select>
+      </div>
+      <div class="gpu-field">
+        <label for="gpuStepsSelect">Шагов генерации</label>
+        <select id="gpuStepsSelect"></select>
+      </div>
+      <p id="gpuStepsHint" class="gpu-hint"></p>
+      <p id="gpuDeviceInfo" class="gpu-device"></p>
+      <div class="row">
+        <button type="button" id="gpuCancelBtn">Отмена</button>
+        <button type="button" id="gpuOkBtn" class="primary">Запустить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="previewModal">
+    <div class="modal preview-modal">
+      <h3 id="previewTitle">Просмотр</h3>
+      <div class="preview-frame">
+        <img id="previewImage" alt="" />
+      </div>
+      <div class="row">
+        <a id="previewDownload" class="btn primary" href="#" download>Скачать</a>
+        <button type="button" id="previewCloseBtn">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const GPU_MODEL_KEY = "photoEditGpuModel";
+    const GPU_STEPS_KEY = "photoEditGpuSteps";
+    const STEP_HINTS = {
+      10: "Быстрый черновик: видно общую идею и крупные изменения, но детали могут быть мягкими, с артефактами и неточностями. Хорошо для проверки композиции и направления правок.",
+      15: "Ускоренный режим: заметно быстрее, качество среднее — подходит для промежуточных тестов.",
+      20: "Баланс скорости и качества: для многих правок уже достаточно, если не нужен максимум детализации.",
+      25: "Почти полное качество Qwen: медленнее, но заметно стабильнее детали и кожа.",
+      28: "Стандарт для FLUX: обычно хороший баланс качества и времени.",
+      37: "Максимум для Qwen: самое высокое качество, но самый долгий прогон.",
+    };
+    let models = [];
+    let maxReferenceImages = 3;
+    let queue = null;
+    let approveJobId = null;
+    let finishedPage = 1;
+    let pollTimer = null;
+    /** Локальный текст промпта, ещё не сохранённый на сервер */
+    const dirtyPrompts = Object.create(null);
+    /** Черновики, у которых идёт загрузка файла — не перерисовывать форму */
+    const pendingDraftUploads = new Set();
+    /** Локальные blob-превью — переживают перерисовку формы */
+    const localDraftPreviews = new Map();
+    /** Подпись последнего render черновика — не трогать DOM без изменений */
+    const draftRenderSig = new Map();
+
+    const els = {
+      statusBadge: document.getElementById("statusBadge"),
+      addDraftBtn: document.getElementById("addDraftBtn"),
+      prepareBtn: document.getElementById("prepareBtn"),
+      startGpuBtn: document.getElementById("startGpuBtn"),
+      draftsList: document.getElementById("draftsList"),
+      pendingList: document.getElementById("pendingList"),
+      runningSection: document.getElementById("runningSection"),
+      runningPanel: document.getElementById("runningPanel"),
+      runningTitle: document.getElementById("runningTitle"),
+      runningProgress: document.getElementById("runningProgress"),
+      runningStep: document.getElementById("runningStep"),
+      runningLog: document.getElementById("runningLog"),
+      runningPauseBtn: document.getElementById("runningPauseBtn"),
+      runningLogBtn: document.getElementById("runningLogBtn"),
+      runningCancelBtn: document.getElementById("runningCancelBtn"),
+      confirmGpuModal: document.getElementById("confirmGpuModal"),
+      confirmGpuText: document.getElementById("confirmGpuText"),
+      confirmGpuOkBtn: document.getElementById("confirmGpuOkBtn"),
+      confirmGpuCancelBtn: document.getElementById("confirmGpuCancelBtn"),
+      finishedList: document.getElementById("finishedList"),
+      finishedPager: document.getElementById("finishedPager"),
+      approveModal: document.getElementById("approveModal"),
+      approveImageName: document.getElementById("approveImageName"),
+      approvePrompt: document.getElementById("approvePrompt"),
+      approvePromptCount: document.getElementById("approvePromptCount"),
+      approveOkBtn: document.getElementById("approveOkBtn"),
+      approveCancelBtn: document.getElementById("approveCancelBtn"),
+      gpuModal: document.getElementById("gpuModal"),
+      gpuModelSelect: document.getElementById("gpuModelSelect"),
+      gpuStepsSelect: document.getElementById("gpuStepsSelect"),
+      gpuStepsHint: document.getElementById("gpuStepsHint"),
+      gpuDeviceInfo: document.getElementById("gpuDeviceInfo"),
+      gpuOkBtn: document.getElementById("gpuOkBtn"),
+      gpuCancelBtn: document.getElementById("gpuCancelBtn"),
+      previewModal: document.getElementById("previewModal"),
+      previewTitle: document.getElementById("previewTitle"),
+      previewImage: document.getElementById("previewImage"),
+      previewDownload: document.getElementById("previewDownload"),
+      previewCloseBtn: document.getElementById("previewCloseBtn"),
+      toast: document.getElementById("toast"),
+    };
+
+    function toast(msg, err) {
+      els.toast.textContent = msg;
+      els.toast.className = "toast show" + (err ? " err" : "");
+      clearTimeout(els.toast._t);
+      els.toast._t = setTimeout(() => els.toast.classList.remove("show"), 4000);
+    }
+
+    async function api(path, opts) {
+      const res = await fetch(path, opts);
+      const text = await res.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch (_) {}
+      if (!res.ok) {
+        let msg = data.detail || data.message || text || res.statusText;
+        if (Array.isArray(msg)) msg = msg.map((x) => x.msg || x).join("; ");
+        throw new Error(msg);
+      }
+      return data;
+    }
+
+    function esc(s) {
+      return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+
+    function modelName(id) {
+      const m = models.find((x) => x.id === id);
+      return m ? m.name : id || "—";
+    }
+
+    function updateApprovePromptCount() {
+      const len = (els.approvePrompt.value || "").length;
+      els.approvePromptCount.textContent = `${len} ${len === 1 ? "символ" : "символов"}`;
+    }
+
+    function gpuModelLabel(m) {
+      if (m.cached || m.ready) return m.name;
+      if (m.id.startsWith("qwen")) return `${m.name} (загрузка ~${m.size_gb || "20 GB"})`;
+      return m.name;
+    }
+
+    function fillGpuSelect() {
+      const saved = localStorage.getItem(GPU_MODEL_KEY) || "";
+      els.gpuModelSelect.innerHTML = models
+        .filter((m) => m.selectable)
+        .map((m) => `<option value="${esc(m.id)}"${m.id === saved ? " selected" : ""}>${esc(gpuModelLabel(m))}</option>`)
+        .join("");
+      fillGpuStepsSelect();
+    }
+
+    function currentGpuModel() {
+      return models.find((m) => m.id === els.gpuModelSelect.value) || null;
+    }
+
+    function fillGpuStepsSelect() {
+      const model = currentGpuModel();
+      const presets = (model && model.step_presets) ? model.step_presets : [10, 15, 20, 28];
+      const saved = Number(localStorage.getItem(GPU_STEPS_KEY) || "");
+      const defaultSteps = (model && model.default_steps) ? model.default_steps : presets[presets.length - 1];
+      const selected = presets.includes(saved) ? saved : defaultSteps;
+      els.gpuStepsSelect.innerHTML = presets
+        .map((steps) => `<option value="${steps}"${steps === selected ? " selected" : ""}>${steps} шагов</option>`)
+        .join("");
+      updateGpuStepsHint();
+    }
+
+    function updateGpuStepsHint() {
+      const steps = Number(els.gpuStepsSelect.value || 0);
+      els.gpuStepsHint.textContent = STEP_HINTS[steps] || "Выберите число шагов диффузии.";
+    }
+
+    function renderGpuDeviceInfo(gpu) {
+      if (!gpu || !gpu.cuda) {
+        els.gpuDeviceInfo.textContent = "GPU не обнаружен — генерация будет на CPU.";
+        return;
+      }
+      const mode = gpu.preferred_mode === "cuda"
+        ? "полная загрузка на GPU"
+        : "CPU offload (медленно)";
+      els.gpuDeviceInfo.textContent =
+        `GPU: ${gpu.device_name}, VRAM ${gpu.vram_total_gb} ГБ, режим: ${mode}.`;
+    }
+
+    function orderButtons(job) {
+      if (!job.reorderable || !queue.reorderable_ids) return "";
+      const ids = queue.reorderable_ids;
+      const idx = ids.indexOf(job.id);
+      if (idx < 0) return "";
+      const up = idx > 0
+        ? `<button type="button" class="icon-btn" data-act="move-up" data-id="${job.id}" title="Выше">↑</button>`
+        : `<button type="button" class="icon-btn" disabled title="Выше">↑</button>`;
+      const down = idx < ids.length - 1
+        ? `<button type="button" class="icon-btn" data-act="move-down" data-id="${job.id}" title="Ниже">↓</button>`
+        : `<button type="button" class="icon-btn" disabled title="Ниже">↓</button>`;
+      return `<div class="order-btns">${up}${down}</div>`;
+    }
+
+    function formatGenTime(ts) {
+      if (!ts) return "—";
+      return new Date(ts * 1000).toLocaleString("ru-RU", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+    }
+
+    function generationTimesBlock(job) {
+      if (!job.generation_started_at && !job.generation_finished_at) return "";
+      return `<div class="gen-times">
+        <span>Старт генерации: ${formatGenTime(job.generation_started_at)}</span>
+        <span>Завершение: ${formatGenTime(job.generation_finished_at)}</span>
+      </div>`;
+    }
+
+    function openImagePreview(jobId, kind, fileName, index) {
+      const idx = Number(index || 0);
+      let title = "Оригинал";
+      let url = `/api/job/${jobId}/original`;
+      if (kind === "result") {
+        title = "Результат";
+        url = `/api/job/${jobId}/result`;
+      } else if (kind === "reference") {
+        title = `Фото-пример · Image ${idx + 2}`;
+        url = `/api/job/${jobId}/reference-original?index=${idx}`;
+      }
+      const stamp = Date.now();
+      const src = url.includes("?") ? `${url}&t=${stamp}` : `${url}?t=${stamp}`;
+      els.previewTitle.textContent = title;
+      els.previewImage.src = src;
+      els.previewImage.alt = title;
+      els.previewDownload.href = url;
+      if (kind === "result") {
+        const stem = (fileName || "photo").replace(/\.[^.]+$/, "");
+        els.previewDownload.download = `${stem}-result.png`;
+      } else {
+        els.previewDownload.download = fileName || (kind === "reference" ? "reference.jpg" : "original.jpg");
+      }
+      els.previewModal.classList.add("open");
+    }
+
+    function openImagePreviewFromThumb(img) {
+      const src = img.getAttribute("src") || "";
+      const kind = img.dataset.previewKind || "original";
+      const name = img.dataset.previewName || "";
+      const index = img.dataset.previewIndex || "0";
+      if (src.startsWith("blob:")) {
+        els.previewTitle.textContent = kind === "reference"
+          ? `Фото-пример · Image ${Number(index) + 2}`
+          : "Оригинал";
+        els.previewImage.src = src;
+        els.previewImage.alt = els.previewTitle.textContent;
+        els.previewDownload.href = src;
+        els.previewDownload.download = name || "photo.jpg";
+        els.previewModal.classList.add("open");
+        return;
+      }
+      openImagePreview(img.dataset.previewJob, kind, name, index);
+    }
+
+    function previewThumbMarkup(src, jobId, kind, name, extraClass, index) {
+      const safeName = esc(name || "");
+      const cls = extraClass ? `thumb preview-thumb ${extraClass}` : "thumb preview-thumb";
+      const idxAttr = kind === "reference" ? ` data-preview-index="${Number(index || 0)}"` : "";
+      return (
+        `<img class="${cls}" src="${src}" alt="" role="button" tabindex="0"` +
+        ` data-preview-job="${jobId}" data-preview-kind="${kind}" data-preview-name="${safeName}"${idxAttr}` +
+        ` title="Открыть в полном размере" />`
+      );
+    }
+
+    function closeImagePreview() {
+      els.previewModal.classList.remove("open");
+      els.previewImage.removeAttribute("src");
+    }
+
+    function jobActions(job, opts) {
+      const showReorder = opts && opts.showReorder;
+      const btns = [];
+      if (showReorder) btns.push(orderButtons(job));
+      if (job.awaiting_approval) {
+        btns.push(`<button type="button" data-act="approve" data-id="${job.id}">Промпт</button>`);
+      }
+      if (job.can_resume) {
+        btns.push(`<button type="button" class="primary" data-act="resume" data-id="${job.id}">Возобновить</button>`);
+      }
+      if (job.can_demote_gpu) {
+        btns.push(`<button type="button" data-act="demote-gpu" data-id="${job.id}">Убрать из генерации</button>`);
+      }
+      if (job.can_requeue) {
+        btns.push(`<button type="button" class="primary" data-act="requeue" data-id="${job.id}">В работу</button>`);
+      }
+      if (job.has_result) {
+        const name = esc(job.image_name || "photo");
+        btns.push(`<button type="button" class="btn" data-act="preview-result" data-id="${job.id}" data-name="${name}">Результат</button>`);
+        btns.push(`<button type="button" class="btn" data-act="preview-original" data-id="${job.id}" data-name="${name}">Оригинал</button>`);
+      }
+      if (job.deletable) {
+        btns.push(`<button type="button" data-act="delete" data-id="${job.id}">Удалить</button>`);
+      }
+      return btns.join("");
+    }
+
+    function draftPrompt(job) {
+      if (Object.prototype.hasOwnProperty.call(dirtyPrompts, job.id)) {
+        return dirtyPrompts[job.id];
+      }
+      return job.prompt || "";
+    }
+
+    function editableQueuePrompt(job) {
+      if (Object.prototype.hasOwnProperty.call(dirtyPrompts, job.id)) {
+        return dirtyPrompts[job.id];
+      }
+      return job.prompt || job.prompt_preview || "";
+    }
+
+    function snapshotDraftPrompts() {
+      const snap = Object.create(null);
+      els.draftsList.querySelectorAll("[data-draft]").forEach((form) => {
+        const ta = form.querySelector('[data-field="prompt"]');
+        if (ta) snap[form.dataset.draft] = ta.value;
+      });
+      return snap;
+    }
+
+    function draftThumbUrl(job, kind, index) {
+      const t = job.updated_at ? Math.floor(job.updated_at * 1000) : Date.now();
+      if (kind === "reference") {
+        return `/api/job/${job.id}/reference-thumb?index=${Number(index || 0)}&t=${t}`;
+      }
+      return `/api/job/${job.id}/thumb?t=${t}`;
+    }
+
+    function jobReferences(job) {
+      if (Array.isArray(job.references) && job.references.length) return job.references;
+      if (job.has_reference_thumb) {
+        return [{ index: 0, name: job.reference_image_name || "Пример" }];
+      }
+      return [];
+    }
+
+    function jobThumbFigure(src, jobId, kind, name, caption, extraClass, index) {
+      return `<figure>
+        ${previewThumbMarkup(src, jobId, kind, name, extraClass, index)}
+        <figcaption>${esc(caption)}</figcaption>
+      </figure>`;
+    }
+
+    function jobThumbsGroupHtml(job) {
+      const figures = [];
+      if (job.has_thumb) {
+        figures.push(jobThumbFigure(
+          `/api/job/${job.id}/thumb`,
+          job.id,
+          "original",
+          job.image_name,
+          "фото"
+        ));
+      }
+      jobReferences(job).forEach((ref, i) => {
+        figures.push(jobThumbFigure(
+          `/api/job/${job.id}/reference-thumb?index=${i}`,
+          job.id,
+          "reference",
+          ref.name,
+          `Image ${i + 2}`,
+          "ref-thumb",
+          i
+        ));
+      });
+      if (!figures.length) return "";
+      return `<div class="job-thumbs">${figures.join("")}</div>`;
+    }
+
+    function draftSignature(job) {
+      const refs = jobReferences(job).map((r) => r.name || "").join(",");
+      return [
+        job.updated_at || 0,
+        job.has_thumb ? 1 : 0,
+        job.reference_count || 0,
+        job.image_name || "",
+        refs,
+      ].join("\x1f");
+    }
+
+    function rememberLocalPreview(jobId, field, file) {
+      const entry = localDraftPreviews.get(jobId) || { refs: [] };
+      if (!entry.refs) entry.refs = [];
+      const url = URL.createObjectURL(file);
+      if (field === "image") {
+        if (entry.mainUrl) URL.revokeObjectURL(entry.mainUrl);
+        entry.mainUrl = url;
+        entry.mainName = file.name;
+      } else {
+        entry.refs.push({ url, name: file.name, pending: true });
+      }
+      localDraftPreviews.set(jobId, entry);
+    }
+
+    function rememberLocalPreviews(jobId, files) {
+      files.forEach((file) => rememberLocalPreview(jobId, "reference", file));
+    }
+
+    function clearLocalPreview(jobId, field) {
+      const entry = localDraftPreviews.get(jobId);
+      if (!entry) return;
+      if (field === "image" || field === "all") {
+        if (entry.mainUrl) URL.revokeObjectURL(entry.mainUrl);
+        delete entry.mainUrl;
+        delete entry.mainName;
+      }
+      if (field === "reference" || field === "all") {
+        (entry.refs || []).forEach((ref) => {
+          if (ref.url) URL.revokeObjectURL(ref.url);
+        });
+        entry.refs = [];
+      }
+      if (!entry.mainUrl && !(entry.refs && entry.refs.length)) localDraftPreviews.delete(jobId);
+    }
+
+    function clearPendingLocalRefs(jobId) {
+      const entry = localDraftPreviews.get(jobId);
+      if (!entry || !entry.refs) return;
+      entry.refs.forEach((ref) => {
+        if (ref.url) URL.revokeObjectURL(ref.url);
+      });
+      entry.refs = [];
+      if (!entry.mainUrl) localDraftPreviews.delete(jobId);
+    }
+
+    function draftPreviewHtml(job) {
+      const local = localDraftPreviews.get(job.id);
+      if (local?.mainUrl && !job.has_thumb) {
+        return `<div class="draft-preview" data-role="main-preview">${previewThumbMarkup(local.mainUrl, job.id, "original", local.mainName)}<strong>${esc(local.mainName || "Фото")}</strong></div>`;
+      }
+      if (job.has_thumb) {
+        return `<div class="draft-preview" data-role="main-preview">${previewThumbMarkup(draftThumbUrl(job, "main"), job.id, "original", job.image_name)}<strong>${esc(job.image_name || "Фото")}</strong></div>`;
+      }
+      return `<div class="draft-preview" data-role="main-preview"><span class="placeholder">Фото не выбрано — выберите файл ниже</span></div>`;
+    }
+
+    function draftRefPreviewHtml(job) {
+      const server = jobReferences(job);
+      const local = localDraftPreviews.get(job.id);
+      const pending = (local?.refs || []).filter((r) => r.pending);
+      const items = [];
+      server.forEach((ref, i) => {
+        items.push(`<div class="draft-ref-item">
+          ${previewThumbMarkup(draftThumbUrl(job, "reference", i), job.id, "reference", ref.name, "", i)}
+          <div class="ref-meta"><strong>Image ${i + 2}</strong><span>${esc(ref.name || "Пример")}</span></div>
+          <button type="button" data-act="remove-reference" data-id="${job.id}" data-index="${i}">Убрать</button>
+        </div>`);
+      });
+      pending.forEach((ref, i) => {
+        items.push(`<div class="draft-ref-item">
+          ${previewThumbMarkup(ref.url, job.id, "reference", ref.name, "", server.length + i)}
+          <div class="ref-meta"><strong>${esc(ref.name || "Пример")}</strong><span class="uploading">сохранение…</span></div>
+        </div>`);
+      });
+      return items.length ? `<div class="draft-ref-list">${items.join("")}</div>` : "";
+    }
+
+    function updateDraftPreviewDom(form, jobId, field, fileName) {
+      if (!form) return;
+      if (field === "image") {
+        const local = localDraftPreviews.get(jobId);
+        const box = form.querySelector('[data-role="main-preview"]');
+        if (box && local?.mainUrl) {
+          box.innerHTML = `${previewThumbMarkup(local.mainUrl, jobId, "original", fileName)}<strong>${esc(fileName)}</strong><span class="uploading"> · сохранение…</span>`;
+        }
+        const head = form.querySelector(".draft-head strong");
+        if (head) head.textContent = fileName;
+        return;
+      }
+      const ref = form.querySelector(".draft-ref");
+      if (!ref) return;
+      let list = ref.querySelector(".draft-ref-list");
+      if (!list) {
+        list = document.createElement("div");
+        list.className = "draft-ref-list";
+        const input = ref.querySelector('[data-field="reference_images"]');
+        ref.insertBefore(list, input || ref.firstChild);
+      }
+      const local = localDraftPreviews.get(jobId);
+      const pending = (local?.refs || []).filter((r) => r.pending);
+      const shownPending = list.querySelectorAll(".uploading").length;
+      pending.slice(shownPending).forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "draft-ref-item";
+        row.innerHTML = `${previewThumbMarkup(item.url, jobId, "reference", item.name)}<div class="ref-meta"><strong>${esc(item.name)}</strong><span class="uploading">сохранение…</span></div>`;
+        list.appendChild(row);
+      });
+    }
+
+    function patchDraftFromServer(form, job) {
+      const main = form.querySelector('[data-role="main-preview"]');
+      if (main && job.has_thumb) {
+        main.innerHTML = `${previewThumbMarkup(draftThumbUrl(job, "main"), job.id, "original", job.image_name)}<strong>${esc(job.image_name || "Фото")}</strong>`;
+        clearLocalPreview(job.id, "image");
+      }
+      const head = form.querySelector(".draft-head strong");
+      if (head && job.image_name) head.textContent = job.image_name;
+      if ((job.reference_count || 0) > 0) {
+        clearPendingLocalRefs(job.id);
+        const ref = form.querySelector(".draft-ref");
+        if (ref) {
+          const html = draftRefPreviewHtml(job);
+          const oldList = ref.querySelector(".draft-ref-list");
+          if (oldList) oldList.outerHTML = html;
+          else {
+            const input = ref.querySelector('[data-field="reference_images"]');
+            if (input) input.insertAdjacentHTML("beforebegin", html);
+            else ref.insertAdjacentHTML("afterbegin", html);
+          }
+          if (!ref.querySelector('[data-act="clear-reference"]')) {
+            ref.insertAdjacentHTML(
+              "beforeend",
+              `<button type="button" data-act="clear-reference" data-id="${job.id}">Убрать все примеры</button>`
+            );
+          }
+        }
+      }
+    }
+
+    function wireDraftForm(form, jobId) {
+      if (!form || form.dataset.wired === "1") return;
+      form.dataset.wired = "1";
+      const imgIn = form.querySelector('[data-field="image"]');
+      const refIn = form.querySelector('[data-field="reference_images"]');
+      if (imgIn) {
+        imgIn.addEventListener("change", () => {
+          const file = imgIn.files && imgIn.files[0];
+          if (file) void onDraftFileSelected(jobId, form, file, "image");
+        });
+      }
+      if (refIn) {
+        refIn.addEventListener("change", () => {
+          const files = refIn.files ? [...refIn.files] : [];
+          if (files.length) void onDraftReferenceFilesSelected(jobId, form, files);
+          refIn.value = "";
+        });
+      }
+    }
+
+    async function onDraftFileSelected(jobId, form, file, field) {
+      rememberLocalPreview(jobId, field, file);
+      updateDraftPreviewDom(form, jobId, field, file.name);
+      pendingDraftUploads.add(jobId);
+      try {
+        const opts = { quiet: true };
+        if (field === "image") opts.imageFile = file;
+        else opts.referenceFiles = [file];
+        await saveDraft(jobId, form, opts);
+        toast(field === "image" ? `Фото загружено: ${file.name}` : `Фото-пример загружено: ${file.name}`);
+      } catch (e) {
+        toast(e.message || "Не удалось сохранить файл", true);
+      } finally {
+        pendingDraftUploads.delete(jobId);
+      }
+    }
+
+    async function onDraftReferenceFilesSelected(jobId, form, files) {
+      const job = (queue?.drafts || []).find((d) => d.id === jobId);
+      const have = (job && job.reference_count) ? job.reference_count : 0;
+      const room = Math.max(0, maxReferenceImages - have);
+      if (!room) {
+        toast(`Максимум ${maxReferenceImages} фото-примера`, true);
+        return;
+      }
+      const take = files.slice(0, room);
+      if (take.length < files.length) {
+        toast(`Добавлены ${take.length} из ${files.length}: максимум ${maxReferenceImages}`);
+      }
+      rememberLocalPreviews(jobId, take);
+      updateDraftPreviewDom(form, jobId, "reference");
+      pendingDraftUploads.add(jobId);
+      try {
+        await saveDraft(jobId, form, { quiet: true, referenceFiles: take });
+        toast(take.length === 1 ? `Фото-пример загружено: ${take[0].name}` : `Загружено примеров: ${take.length}`);
+      } catch (e) {
+        toast(e.message || "Не удалось сохранить файл", true);
+      } finally {
+        pendingDraftUploads.delete(jobId);
+      }
+    }
+
+    function renderDraft(job) {
+      const name = esc(job.image_name || "Новое фото");
+      const n = job.reference_count || 0;
+      const hasRefs = n > 0 || (localDraftPreviews.get(job.id)?.refs || []).length > 0;
+      const refBlock = `<div class="draft-ref">
+        <label>Фото-примеры (необязательно, до ${maxReferenceImages})</label>
+        ${draftRefPreviewHtml(job)}
+        <input type="file" accept="image/*" multiple data-field="reference_images" />
+        <p class="ref-hint">В промпте укажите, что взять с примеров. Для Qwen: Image 1 — основное фото, Image 2, 3… — примеры.</p>
+        ${hasRefs ? `<button type="button" data-act="clear-reference" data-id="${job.id}">Убрать все примеры</button>` : ""}
+      </div>`;
+      return `<div class="draft-form" data-draft="${job.id}">
+        <div class="draft-head"><strong>${name}</strong></div>
+        ${draftPreviewHtml(job)}
+        <label>Основное фото</label>
+        <input type="file" accept="image/*" data-field="image" />
+        ${refBlock}
+        <textarea data-field="prompt" placeholder="Промпт на русском или английском">${esc(draftPrompt(job))}</textarea>
+        <div class="toolbar">
+          <button type="button" data-act="save-draft" data-id="${job.id}">Сохранить</button>
+          <button type="button" class="danger" data-act="delete" data-id="${job.id}">Удалить</button>
+        </div>
+      </div>`;
+    }
+
+    function restoreDraftPrompts() {
+      els.draftsList.querySelectorAll("[data-draft]").forEach((form) => {
+        const id = form.dataset.draft;
+        if (!Object.prototype.hasOwnProperty.call(dirtyPrompts, id)) return;
+        const ta = form.querySelector('[data-field="prompt"]');
+        if (ta) ta.value = dirtyPrompts[id];
+      });
+    }
+
+    function renderDrafts(q) {
+      const drafts = q.drafts || [];
+      const draftIds = new Set(drafts.map((d) => d.id));
+
+      Object.assign(dirtyPrompts, snapshotDraftPrompts());
+
+      els.draftsList.querySelectorAll("[data-draft]").forEach((form) => {
+        if (!draftIds.has(form.dataset.draft)) {
+          delete dirtyPrompts[form.dataset.draft];
+          clearLocalPreview(form.dataset.draft, "all");
+          draftRenderSig.delete(form.dataset.draft);
+          form.remove();
+        }
+      });
+
+      if (!drafts.length) {
+        if (!els.draftsList.querySelector("[data-draft]")) {
+          els.draftsList.innerHTML =
+            '<p class="empty">Добавьте черновик: фото + промпт (опционально — фото-примеры), затем «Подготовить промпты».</p>';
+        }
+        return;
+      }
+
+      const emptyMsg = els.draftsList.querySelector(".empty");
+      if (emptyMsg) emptyMsg.remove();
+
+      drafts.forEach((job) => {
+        const sig = draftSignature(job);
+        const existing = els.draftsList.querySelector(`[data-draft="${job.id}"]`);
+        if (existing && pendingDraftUploads.has(job.id)) {
+          if (job.has_thumb || job.has_reference_thumb) {
+            patchDraftFromServer(existing, job);
+            draftRenderSig.set(job.id, sig);
+          }
+          return;
+        }
+        if (existing && draftRenderSig.get(job.id) === sig) {
+          wireDraftForm(existing, job.id);
+          return;
+        }
+        draftRenderSig.set(job.id, sig);
+        const html = renderDraft(job);
+        if (existing) {
+          existing.outerHTML = html;
+        } else {
+          els.draftsList.insertAdjacentHTML("beforeend", html);
+        }
+        wireDraftForm(els.draftsList.querySelector(`[data-draft="${job.id}"]`), job.id);
+      });
+
+      restoreDraftPrompts();
+    }
+
+    function renderJobVisual(job, showThumb, variant) {
+      if (variant === "finished" && job.has_result && job.has_thumb) {
+        const name = esc(job.image_name || "photo");
+        return `<div class="job-compare">
+          <figure>
+            ${previewThumbMarkup(`/api/job/${job.id}/thumb`, job.id, "original", job.image_name)}
+            <figcaption>До</figcaption>
+          </figure>
+          <figure>
+            ${previewThumbMarkup(`/api/job/${job.id}/result`, job.id, "result", name)}
+            <figcaption>После</figcaption>
+          </figure>
+        </div>`;
+      }
+      if (showThumb) {
+        const group = jobThumbsGroupHtml(job);
+        if (group) return group;
+      }
+      return `<div class="thumb"></div>`;
+    }
+
+    function pauseStepLabel(job) {
+      if (!job.paused && !job.can_resume) return "";
+      const step = job.paused_at_step || job.step;
+      const total = job.total_steps;
+      if (step && total) {
+        return `<div class="pause-step">Возобновление с чекпоинта шага ${step}/${total}</div>`;
+      }
+      return `<div class="pause-step">На паузе</div>`;
+    }
+
+    function renderJobRow(job, showThumb, variant) {
+      const visual = renderJobVisual(job, showThumb, variant);
+      const compare = variant === "finished" && job.has_result && job.has_thumb;
+      const hasThumbs = /job-thumbs|job-compare/.test(visual);
+      const gpuQueued = job.gpu_queued;
+      const paused = job.paused || job.can_resume;
+      const wasCancelled = job.was_cancelled;
+      const canEditPrompt = job.can_edit_prompt && variant === "pending";
+      const prompt = job.prompt_used || job.prompt_preview || "";
+      const editBlock = canEditPrompt
+        ? `<div class="requeue-edit">
+            <label>Промпт</label>
+            <textarea data-field="requeue-prompt" data-id="${job.id}" placeholder="Промпт на русском или английском">${esc(editableQueuePrompt(job))}</textarea>
+            <button type="button" class="primary" data-act="save-requeue-prompt" data-id="${job.id}">Сохранить и подготовить</button>
+          </div>`
+        : "";
+      return `<div class="job${compare ? " has-compare" : ""}${hasThumbs ? " has-thumbs" : ""}${gpuQueued ? " gpu-queued" : ""}${paused ? " paused" : ""}${wasCancelled ? " was-cancelled" : ""}" data-id="${job.id}">
+        ${visual}
+        <div class="meta">
+          ${wasCancelled ? `<div class="cancelled-badge">Отменялась ранее</div>` : ""}
+          <div class="name">${esc(job.image_name || job.id.slice(0, 8))}</div>
+          <div class="msg">${esc(job.message || job.status)}</div>
+          ${variant === "finished" ? generationTimesBlock(job) : ""}
+          ${pauseStepLabel(job)}
+          ${editBlock}
+          ${!canEditPrompt && prompt ? `<div class="prompt">${esc(prompt)}</div>` : ""}
+        </div>
+        <div class="actions">${jobActions(job, { showReorder: variant === "pending" })}</div>
+      </div>`;
+    }
+
+    const PHASE_SHORT = { 3: "GPU", 4: "фото", 5: "генерация" };
+
+    let runningJobId = null;
+    let runningLogSig = "";
+    let runningTickTimer = null;
+    let runningStepStartedAt = null;
+    let runningStepKey = "";
+
+    function formatElapsed(sec) {
+      const total = Math.max(0, Math.round(sec));
+      if (total < 60) return `${total} с`;
+      const minutes = Math.floor(total / 60);
+      const secs = total % 60;
+      if (minutes < 60) return secs ? `${minutes} мин ${secs} с` : `${minutes} мин`;
+      const hours = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      return `${hours} ч ${mins} мин`;
+    }
+
+    function formatLogTime(ts) {
+      if (!ts) return "";
+      return new Date(ts * 1000).toLocaleString("ru-RU", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+    }
+
+    function formatLogItem(e, liveElapsedSec) {
+      let tag = "";
+      if (e.step && e.total_steps) tag = `шаг ${e.step}/${e.total_steps}`;
+      else if (e.phase) tag = PHASE_SHORT[e.phase] || `этап ${e.phase}`;
+      const showLive = !e.checkpoint && e.status === "generate" && e.step && liveElapsedSec != null;
+      const timeTs = showLive ? (Date.now() / 1000) : e.t;
+      const time = timeTs
+        ? `<span class="log-time">${esc(formatLogTime(timeTs))}</span>`
+        : "";
+      let text = e.text || "";
+      if (showLive) {
+        const elapsedTxt = formatElapsed(liveElapsedSec);
+        if (/прошло [^,]+/.test(text)) {
+          text = text.replace(/прошло [^,]+/, `прошло ${elapsedTxt}`);
+        } else if (text.includes("среднее")) {
+          text = text.replace("среднее", `прошло ${elapsedTxt}, среднее`);
+        } else {
+          text = `${text} · прошло ${elapsedTxt}`;
+        }
+      }
+      const ckpt = e.checkpoint
+        ? `<span class="ckpt" title="С этого шага можно продолжить после паузы или сбоя GPU">чекпоинт</span>`
+        : "";
+      return `<li>${time}<span class="tag">${esc(tag)}</span> ${esc(text)}${ckpt}</li>`;
+    }
+
+    function currentStepElapsed(job) {
+      if (!job || !job.step) return null;
+      const acts = job.activities || [];
+      // After pause/resume, ignore pre-pause timestamps for the same step.
+      let sessionStart = null;
+      for (const e of acts) {
+        const text = e.text || "";
+        if (
+          /Возобновление генерации|возобновление — шаг|Загрузка «/i.test(text)
+          || (e.status === "generate" && /возобновление/i.test(text))
+        ) {
+          if (e.t) sessionStart = e.t;
+        }
+      }
+      let stepClockStart = null;
+      for (const e of acts) {
+        if (sessionStart && e.t && e.t < sessionStart) continue;
+        if (e.status === "generate" && e.step === job.step && e.t) {
+          stepClockStart = e.t;
+          break;
+        }
+      }
+      if (!stepClockStart && sessionStart) stepClockStart = sessionStart;
+      const key = `${job.id}:${job.step}:${sessionStart || 0}`;
+      if (key !== runningStepKey) {
+        runningStepKey = key;
+        runningStepStartedAt = stepClockStart ? stepClockStart * 1000 : Date.now();
+      }
+      if (!runningStepStartedAt) return null;
+      return Math.max(0, (Date.now() - runningStepStartedAt) / 1000);
+    }
+
+    function formatRunningStep(job) {
+      const elapsed = currentStepElapsed(job);
+      const elapsedPart = elapsed != null
+        ? ` · прошло ${formatElapsed(elapsed)}`
+        : "";
+      if (job.step && job.total_steps) {
+        return `<span class="step-num">Шаг ${job.step}/${job.total_steps}</span> — идёт генерация${elapsedPart}`;
+      }
+      const msg = job.message || job.status || "";
+      return esc(msg) + (elapsedPart ? esc(elapsedPart) : "");
+    }
+
+    function updateRunningLog(activities, liveElapsedSec) {
+      const el = els.runningLog;
+      const items = (activities || []).slice(-40);
+      const liveKey = liveElapsedSec == null ? "" : Math.floor(liveElapsedSec);
+      const sig = items.map((e) => `${e.t}|${e.text}|${e.step || 0}|${e.checkpoint ? 1 : 0}`).join(";") + `|${liveKey}`;
+      if (sig === runningLogSig) return;
+      const distFromBottom = el.scrollHeight - el.scrollTop;
+      runningLogSig = sig;
+      el.innerHTML = items.map((e) => formatLogItem(e, liveElapsedSec)).join("");
+      el.scrollTop = Math.max(0, el.scrollHeight - distFromBottom);
+    }
+
+    function stopRunningTick() {
+      if (runningTickTimer) {
+        clearInterval(runningTickTimer);
+        runningTickTimer = null;
+      }
+    }
+
+    function startRunningTick() {
+      if (runningTickTimer) return;
+      runningTickTimer = setInterval(() => {
+        if (!queue || !queue.running) return;
+        const job = queue.running;
+        const elapsed = currentStepElapsed(job);
+        els.runningStep.innerHTML = formatRunningStep(job);
+        updateRunningLog(job.activities, elapsed);
+      }, 1000);
+    }
+
+    function renderRunning(job) {
+      if (runningJobId !== job.id) {
+        runningJobId = job.id;
+        runningLogSig = "";
+        runningStepKey = "";
+        runningStepStartedAt = null;
+        els.runningLog.innerHTML = "";
+      }
+      const thumbs = jobThumbsGroupHtml(job);
+      els.runningTitle.innerHTML =
+        `${thumbs}<div class="job-meta"><strong>${esc(job.image_name || "")}</strong>` +
+        `<div style="color:var(--muted);font-size:12px">${esc(job.model_id || "")}</div></div>`;
+      els.runningProgress.style.width = `${job.progress || 0}%`;
+      const elapsed = currentStepElapsed(job);
+      els.runningStep.innerHTML = formatRunningStep(job);
+      updateRunningLog(job.activities, elapsed);
+      els.runningCancelBtn.dataset.id = job.id;
+      els.runningPauseBtn.dataset.id = job.id;
+      els.runningPauseBtn.hidden = !job.pausable;
+      els.runningCancelBtn.hidden = false;
+      startRunningTick();
+    }
+
+    function renderFinishedPager(q) {
+      const pager = els.finishedPager;
+      const pages = q.finished_pages || 1;
+      const page = q.finished_page || 1;
+      const total = q.finished_total || 0;
+      if (pages <= 1 || total === 0) {
+        pager.hidden = true;
+        pager.innerHTML = "";
+        return;
+      }
+      pager.hidden = false;
+      const prevDisabled = page <= 1;
+      const nextDisabled = page >= pages;
+      pager.innerHTML =
+        `<button type="button" class="icon-btn" data-act="finished-prev" ${prevDisabled ? "disabled" : ""}>←</button>` +
+        `<span class="pager-info">${page} / ${pages}</span>` +
+        `<button type="button" class="icon-btn" data-act="finished-next" ${nextDisabled ? "disabled" : ""}>→</button>` +
+        `<span class="pager-info" style="min-width:auto;font-size:12px">всего ${total}</span>`;
+    }
+
+    function renderQueue() {
+      if (!queue) return;
+      const q = queue;
+      els.prepareBtn.disabled = !q.can_prepare;
+      els.startGpuBtn.disabled = !q.can_start_generation;
+      if (q.gpu_confirm_only) {
+        els.startGpuBtn.textContent = q.approved_count > 0
+          ? `Добавить в генерацию (${q.approved_count})…`
+          : "Начать генерацию…";
+      } else {
+        els.startGpuBtn.textContent = "Начать генерацию…";
+      }
+
+      renderDrafts(q);
+
+      if (!q.pending.length) {
+        els.pendingList.innerHTML = '<p class="empty">После подготовки задачи появятся здесь. Английский промпт подтверждается автоматически.</p>';
+      } else {
+        els.pendingList.innerHTML = q.pending.map((j) => renderJobRow(j, true, "pending")).join("");
+      }
+
+      if (q.running) {
+        els.runningSection.hidden = false;
+        renderRunning(q.running);
+      } else {
+        els.runningSection.hidden = true;
+        stopRunningTick();
+        runningJobId = null;
+        runningLogSig = "";
+        runningStepKey = "";
+        runningStepStartedAt = null;
+        els.runningLog.innerHTML = "";
+      }
+
+      if (!q.finished_total) {
+        els.finishedList.innerHTML = '<p class="empty">Завершённые задачи появятся здесь.</p>';
+      } else {
+        els.finishedList.innerHTML = q.finished.map((j) => renderJobRow(j, true, "finished")).join("");
+      }
+      finishedPage = q.finished_page || finishedPage;
+      renderFinishedPager(q);
+    }
+
+    async function moveInQueue(jobId, direction) {
+      if (!queue || !queue.reorderable_ids) return;
+      const ids = queue.reorderable_ids.slice();
+      const idx = ids.indexOf(jobId);
+      if (idx < 0) return;
+      const swap = direction === "up" ? idx - 1 : idx + 1;
+      if (swap < 0 || swap >= ids.length) return;
+      [ids[idx], ids[swap]] = [ids[swap], ids[idx]];
+      await api("/api/queue/reorder", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order: ids }),
+      });
+      await refreshQueue();
+    }
+
+    async function refreshStatus() {
+      try {
+        const st = await api("/api/status");
+        const busy = st.gpu_busy || (st.active_job && !st.active_job.done);
+        let label = busy ? "GPU занят" : "GPU свободен";
+        if (st.gpu && st.gpu.cuda) {
+          const suffix = st.gpu.preferred_mode === "cuda" ? "CUDA" : "offload";
+          label += ` · ${st.gpu.vram_total_gb} ГБ · ${suffix}`;
+        }
+        els.statusBadge.textContent = label;
+        els.statusBadge.className = "badge " + (busy ? "busy" : "ok");
+      } catch (_) {}
+    }
+
+    async function refreshQueue() {
+      queue = await api(`/api/queue?finished_page=${finishedPage}`);
+      if (queue.finished_page) {
+        finishedPage = queue.finished_page;
+      }
+      renderQueue();
+      await refreshStatus();
+    }
+
+    async function setFinishedPage(page) {
+      finishedPage = Math.max(1, page);
+      queue = await api(`/api/queue?finished_page=${finishedPage}`);
+      if (queue.finished_page) {
+        finishedPage = queue.finished_page;
+      }
+      renderQueue();
+    }
+
+    async function saveDraft(jobId, form, opts) {
+      const quiet = opts && opts.quiet;
+      const fd = new FormData();
+      const promptEl = form.querySelector('[data-field="prompt"]');
+      const prompt = promptEl ? promptEl.value : "";
+      const file = opts && opts.imageFile
+        ? opts.imageFile
+        : form.querySelector('[data-field="image"]')?.files[0];
+      const refFiles = opts && opts.referenceFiles
+        ? opts.referenceFiles
+        : [...(form.querySelector('[data-field="reference_images"]')?.files || [])];
+      fd.append("prompt", prompt);
+      if (file) fd.append("image", file);
+      refFiles.forEach((refFile) => fd.append("reference_images", refFile));
+      if (opts && opts.clearReference) fd.append("clear_reference", "1");
+      if (opts && opts.removeReferenceIndex != null) fd.append("remove_reference", String(opts.removeReferenceIndex));
+      try {
+        const data = await api(`/api/queue/draft/${jobId}`, { method: "POST", body: fd });
+        delete dirtyPrompts[jobId];
+        if (opts && opts.clearReference) clearLocalPreview(jobId, "reference");
+        if (!quiet) toast("Черновик сохранён");
+        if (data.queue) {
+          queue = data.queue;
+          renderQueue();
+        } else {
+          await refreshQueue();
+        }
+      } catch (e) {
+        await refreshQueue();
+        throw e;
+      }
+    }
+
+    els.draftsList.addEventListener("input", (ev) => {
+      const form = ev.target.closest("[data-draft]");
+      if (!form || !ev.target.matches('[data-field="prompt"]')) return;
+      dirtyPrompts[form.dataset.draft] = ev.target.value;
+    });
+
+    els.pendingList.addEventListener("input", (ev) => {
+      if (!ev.target.matches('[data-field="requeue-prompt"]')) return;
+      dirtyPrompts[ev.target.dataset.id] = ev.target.value;
+    });
+
+    els.runningPauseBtn.onclick = async () => {
+      const id = els.runningPauseBtn.dataset.id;
+      if (!id) return;
+      try {
+        await api(`/api/job/${id}/pause`, { method: "POST" });
+        toast("Пауза — задача в очереди");
+        await refreshQueue();
+      } catch (e) { toast(e.message, true); }
+    };
+
+    els.runningLogBtn.onclick = async () => {
+      try {
+        await api("/api/log/open", { method: "POST" });
+      } catch (e) { toast(e.message, true); }
+    };
+
+    els.runningCancelBtn.onclick = async () => {
+      const id = els.runningCancelBtn.dataset.id;
+      if (!id) return;
+      try {
+        await api(`/api/job/${id}/cancel`, { method: "POST" });
+        await refreshQueue();
+      } catch (e) { toast(e.message, true); }
+    };
+
+    document.body.addEventListener("click", (ev) => {
+      const thumb = ev.target.closest(".preview-thumb");
+      if (thumb) {
+        openImagePreviewFromThumb(thumb);
+        return;
+      }
+    });
+
+    document.body.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const thumb = ev.target.closest(".preview-thumb");
+      if (!thumb) return;
+      ev.preventDefault();
+      openImagePreviewFromThumb(thumb);
+    });
+
+    document.body.addEventListener("click", async (ev) => {
+      const btn = ev.target.closest("[data-act]");
+      if (!btn) return;
+      const act = btn.dataset.act;
+      const id = btn.dataset.id;
+      try {
+        if (act === "save-draft") {
+          const form = btn.closest("[data-draft]");
+          await saveDraft(id, form);
+        } else if (act === "clear-reference") {
+          const form = btn.closest("[data-draft]");
+          await saveDraft(id, form, { quiet: true, clearReference: true });
+          toast("Фото-примеры убраны");
+          await refreshQueue();
+        } else if (act === "remove-reference") {
+          const form = btn.closest("[data-draft]");
+          const index = Number(btn.dataset.index || 0);
+          await saveDraft(id, form, { quiet: true, removeReferenceIndex: index });
+          toast("Фото-пример убран");
+          await refreshQueue();
+        } else if (act === "delete") {
+          delete dirtyPrompts[id];
+          await api(`/api/queue/${id}`, { method: "DELETE" });
+          await refreshQueue();
+        } else if (act === "move-up") {
+          await moveInQueue(id, "up");
+        } else if (act === "move-down") {
+          await moveInQueue(id, "down");
+        } else if (act === "finished-prev") {
+          await setFinishedPage(finishedPage - 1);
+        } else if (act === "finished-next") {
+          await setFinishedPage(finishedPage + 1);
+        } else if (act === "requeue") {
+          const r = await api(`/api/job/${id}/requeue`, { method: "POST" });
+          toast("Результат в черновиках — укажите промпт");
+          await refreshQueue();
+        } else if (act === "resume") {
+          await api(`/api/job/${id}/resume`, { method: "POST" });
+          toast("Возобновление генерации");
+          await refreshQueue();
+        } else if (act === "demote-gpu") {
+          await api(`/api/job/${id}/demote-gpu`, { method: "POST" });
+          toast("Убрано из очереди генерации");
+          await refreshQueue();
+        } else if (act === "save-requeue-prompt") {
+          const ta = els.pendingList.querySelector(`textarea[data-field="requeue-prompt"][data-id="${id}"]`);
+          const fd = new FormData();
+          fd.append("prompt", ta ? ta.value : "");
+          await api(`/api/job/${id}/prompt`, { method: "PUT", body: fd });
+          delete dirtyPrompts[id];
+          toast("Промпт сохранён — подготовка");
+          await refreshQueue();
+        } else if (act === "preview-result") {
+          openImagePreview(id, "result", btn.dataset.name || "");
+        } else if (act === "preview-original") {
+          openImagePreview(id, "original", btn.dataset.name || "");
+        } else if (act === "approve") {
+          const job = [...(queue.pending || []), queue.running].filter(Boolean).find((j) => j.id === id);
+          approveJobId = id;
+          els.approveImageName.textContent = job ? job.image_name : "";
+          els.approvePrompt.value = job ? (job.prompt_used || job.prompt || "") : "";
+          updateApprovePromptCount();
+          els.approveModal.classList.add("open");
+        }
+      } catch (e) {
+        toast(e.message, true);
+      }
+    });
+
+    els.addDraftBtn.onclick = async () => {
+      try {
+        await api("/api/queue/draft", { method: "POST" });
+        await refreshQueue();
+      } catch (e) { toast(e.message, true); }
+    };
+
+    els.prepareBtn.onclick = async () => {
+      try {
+        const r = await api("/api/queue/prepare", { method: "POST" });
+        toast(`Подготовка: ${r.prepared} задач`);
+        await refreshQueue();
+      } catch (e) { toast(e.message, true); }
+    };
+
+    els.startGpuBtn.onclick = async () => {
+      if (queue && queue.gpu_confirm_only) {
+        const n = queue.approved_count || 0;
+        const model = queue.gpu_session_model || "";
+        const steps = queue.gpu_session_steps || "";
+        els.confirmGpuText.textContent =
+          `${n} ${n === 1 ? "задача будет добавлена" : "задач будут добавлены"} в очередь генерации` +
+          (model ? ` (модель: ${modelName(model)}` : "") +
+          (steps ? `, ${steps} шагов` : "") +
+          (model ? ")" : "") +
+          ". Текущая генерация продолжится, затем пойдут следующие по порядку.";
+        els.confirmGpuModal.classList.add("open");
+        return;
+      }
+      fillGpuSelect();
+      const data = await api("/api/models");
+      renderGpuDeviceInfo(data.gpu);
+      els.gpuModal.classList.add("open");
+    };
+
+    els.gpuModelSelect.addEventListener("change", fillGpuStepsSelect);
+    els.gpuStepsSelect.addEventListener("change", updateGpuStepsHint);
+
+    els.confirmGpuCancelBtn.onclick = () => els.confirmGpuModal.classList.remove("open");
+    els.confirmGpuOkBtn.onclick = async () => {
+      try {
+        const fd = new FormData();
+        const r = await api("/api/queue/start-gpu", { method: "POST", body: fd });
+        els.confirmGpuModal.classList.remove("open");
+        toast(`Добавлено в генерацию: ${r.started}`);
+        await refreshQueue();
+      } catch (e) { toast(e.message, true); }
+    };
+
+    els.gpuCancelBtn.onclick = () => els.gpuModal.classList.remove("open");
+    els.previewCloseBtn.onclick = closeImagePreview;
+    els.previewModal.onclick = (ev) => {
+      if (ev.target === els.previewModal) closeImagePreview();
+    };
+    els.approveCancelBtn.onclick = () => { els.approveModal.classList.remove("open"); approveJobId = null; };
+    els.approvePrompt.addEventListener("input", updateApprovePromptCount);
+
+    els.approveOkBtn.onclick = async () => {
+      if (!approveJobId) return;
+      try {
+        const fd = new FormData();
+        fd.append("prompt_used", els.approvePrompt.value);
+        await api(`/api/job/${approveJobId}/approve`, { method: "POST", body: fd });
+        els.approveModal.classList.remove("open");
+        approveJobId = null;
+        toast("Промпт подтверждён");
+        await refreshQueue();
+      } catch (e) { toast(e.message, true); }
+    };
+
+    els.gpuOkBtn.onclick = async () => {
+      const model = els.gpuModelSelect.value;
+      const steps = els.gpuStepsSelect.value;
+      localStorage.setItem(GPU_MODEL_KEY, model);
+      localStorage.setItem(GPU_STEPS_KEY, steps);
+      try {
+        const fd = new FormData();
+        fd.append("model", model);
+        fd.append("steps", steps);
+        const r = await api("/api/queue/start-gpu", { method: "POST", body: fd });
+        els.gpuModal.classList.remove("open");
+        toast(`Запущено: ${r.started} · ${modelName(model)} · ${r.inference_steps} шагов`);
+        await refreshQueue();
+      } catch (e) { toast(e.message, true); }
+    };
+
+    async function init() {
+      const data = await api("/api/models");
+      models = data.models || [];
+      if (data.max_reference_images) maxReferenceImages = data.max_reference_images;
+      renderGpuDeviceInfo(data.gpu);
+      fillGpuSelect();
+      await refreshQueue();
+      pollTimer = setInterval(refreshQueue, 1200);
+    }
+
+    init().catch((e) => toast(e.message, true));
+  </script>
+</body>
+</html>
