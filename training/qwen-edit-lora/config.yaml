@@ -1,0 +1,55 @@
+# LoRA for Qwen-Image-Edit-2509 (AI-Toolkit).
+# Pairs: source/<name>.jpg = input photo, target/<name>.jpg = desired result,
+# optional target/<name>.txt = English edit instruction.
+#
+# Run: train-lora.bat (cwd inside tools/ai-toolkit).
+
+job: extension
+config:
+  name: qwen-edit-2509-custom
+  process:
+    - type: diffusion_trainer
+      training_folder: "../../training/qwen-edit-lora/output"
+      device: cuda:0
+      network:
+        type: lora
+        linear: 16
+        linear_alpha: 16
+      save:
+        dtype: bf16
+        save_every: 250
+        max_step_saves_to_keep: 4
+      datasets:
+        - folder_path: "../../training/qwen-edit-lora/target"
+          control_path:
+            - "../../training/qwen-edit-lora/source"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05
+          cache_latents_to_disk: true
+          resolution: [512, 768, 1024]
+      train:
+        batch_size: 1
+        cache_text_embeddings: true
+        steps: 2000
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        optimizer: "adamw8bit"
+        lr: 1.0e-4
+        dtype: bf16
+      model:
+        name_or_path: "Qwen/Qwen-Image-Edit-2509"
+        arch: "qwen_image_edit_plus"
+        quantize: true
+        qtype: "uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_2509_torchao_uint3.safetensors"
+        quantize_te: true
+        qtype_te: "qfloat8"
+        low_vram: true
+      sample:
+        sampler: "flowmatch"
+        sample_every: 250
+        width: 1024
+        height: 1024
+        samples: []

@@ -1,0 +1,3 @@
+[submodule "moss_audio_tokenizer"]
+	path = moss_audio_tokenizer
+	url = https://github.com/OpenMOSS/MOSS-Audio-Tokenizer

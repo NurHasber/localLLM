@@ -195,7 +195,7 @@ def run_gpu_subprocess(
     model_id: str,
     english_prompt: str,
     *,
-    flux_prompt: str | None,
+    approved_prompt: str | None,
     pipeline,
     cancel_checker,
     on_process,
@@ -203,6 +203,7 @@ def run_gpu_subprocess(
     pause_checker=None,
     inference_steps: int | None = None,
     reference_raw: list[bytes] | None = None,
+    lora_id: str = "",
 ) -> bytes:
     clear_step_timers(job_id)
     work_dir = Path(tempfile.mkdtemp(prefix="photoedit-gpu-", dir=ROOT / "logs"))
@@ -214,7 +215,8 @@ def run_gpu_subprocess(
         "job_id": job_id,
         "model_id": model_id,
         "prompt": english_prompt,
-        "flux_prompt": flux_prompt,
+        "approved_prompt": approved_prompt,
+        "lora_id": lora_id or "",
         "resume": resume,
         "inference_steps": inference_steps or 0,
         "has_reference": bool(refs),

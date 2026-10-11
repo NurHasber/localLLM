@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <title>Photone — Сортировка фото</title>
+  <!-- ui-build: 2026-09-28-tray -->
+  <link rel="icon" href="/static/favicon.svg?v=photone" type="image/svg+xml" />
+  <link rel="icon" href="/static/favicon.ico?v=photone" sizes="32x32" />
+  <style>
+    :root {
+      --bg: #0f1117;
+      --panel: #171a22;
+      --border: #2a3040;
+      --text: #e8ecf4;
+      --muted: #8b93a7;
+      --accent: #5b8def;
+      --ok: #3ecf8e;
+      --warn: #e8b84a;
+      --err: #f07178;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.45 system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+    .header-left { display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
+    header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+    .site-nav { display: flex; gap: 0.85rem; }
+    .site-nav a { color: var(--muted); text-decoration: none; }
+    .site-nav a:hover, .site-nav a.active { color: var(--text); }
+    .site-nav a.active { font-weight: 600; }
+    .badge {
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #252a36;
+      color: var(--muted);
+    }
+    .badge.busy { background: #3d2e14; color: var(--warn); }
+    .badge.ok { background: #1a3328; color: var(--ok); }
+    .work-live {
+      display: none;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.7rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      background: #241c10;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .work-live.on { display: flex; }
+    .work-live.done {
+      background: #14241c;
+      border-bottom-color: #1a3328;
+    }
+    .work-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--warn);
+      flex-shrink: 0;
+      animation: pulse 1.1s ease-in-out infinite;
+    }
+    .work-live.done .work-dot { background: var(--ok); animation: none; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(0.85); }
+    }
+    .work-live strong { display: block; font-size: 13px; }
+    .work-live span { color: var(--muted); font-size: 12px; }
+    .bar.indet > span {
+      width: 35% !important;
+      animation: slide 1.2s ease-in-out infinite;
+    }
+    @keyframes slide {
+      0% { transform: translateX(-120%); }
+      100% { transform: translateX(320%); }
+    }
+    main { max-width: 960px; margin: 0 auto; padding: 1.25rem; }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.1rem 1.15rem;
+      margin-bottom: 1rem;
+    }
+    h2 { margin: 0 0 0.75rem; font-size: 1rem; }
+    p.hint { color: var(--muted); margin: 0 0 0.85rem; font-size: 13px; }
+    label { display: block; margin-bottom: 0.35rem; color: var(--muted); font-size: 12px; }
+    input[type="text"] {
+      width: 100%;
+      background: #0f1117;
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 0.5rem 0.65rem;
+      font: inherit;
+    }
+    .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; margin-top: 0.65rem; }
+    .check { display: flex; align-items: center; gap: 0.4rem; color: var(--muted); font-size: 13px; }
+    button {
+      background: #252a36;
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 0.45rem 0.8rem;
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button.primary { background: #24365c; border-color: #3d5a99; }
+    button.warn { background: #3d2e14; border-color: #6a5420; color: var(--warn); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .bar {
+      height: 8px;
+      background: #252a36;
+      border-radius: 99px;
+      overflow: hidden;
+      margin: 0.6rem 0 0.35rem;
+    }
+    .bar > span {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+    }
+    .msg { color: var(--muted); font-size: 13px; }
+    .msg.err { color: var(--err); }
+    ul.recent, ul.groups { list-style: none; margin: 0.5rem 0 0; padding: 0; }
+    ul.recent li, .group-files li {
+      padding: 0.35rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    ul.recent .cap { color: var(--muted); }
+    .group {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.65rem 0.75rem;
+      margin-top: 0.5rem;
+    }
+    .group h3 { margin: 0 0 0.35rem; font-size: 13px; }
+    .group h3 span { color: var(--muted); font-weight: 400; }
+    .toast {
+      position: fixed; bottom: 1rem; right: 1rem;
+      background: #252a36; border: 1px solid var(--border);
+      padding: 0.65rem 1rem; border-radius: 8px; display: none; max-width: 360px;
+      z-index: 200;
+    }
+    .toast.show { display: block; }
+    .toast.err { border-color: var(--err); color: var(--err); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>Photone</h1>
+      <nav class="site-nav">
+        <a href="/">Обработка фото</a>
+        <a href="/sort" class="active">Сортировка фото</a>
+        <a href="/generate">Создание фото</a>
+        <a href="/music">AI Sound</a>
+        <a href="/speech">AI Голос</a>
+      </nav>
+    </div>
+    <span id="statusBadge" class="badge">загрузка…</span>
+  </header>
+  <div id="workLive" class="work-live" hidden>
+    <div class="work-dot"></div>
+    <div>
+      <strong id="workLiveTitle">Работа</strong>
+      <span id="workLiveDetail">запуск…</span>
+    </div>
+  </div>
+  <main>
+    <section>
+      <h2>1. Папка на диске</h2>
+      <p class="hint">Путь, который видит Python-сервер (не выбор файлов в браузере). Подписи пишутся в logs/sort/*.jsonl — можно продолжить после паузы. Копии пойдут в подпапку sorted, оригиналы не трогаем.</p>
+      <label for="folder">Путь</label>
+      <input id="folder" type="text" placeholder="F:\Photos\inbox" />
+      <div class="row">
+        <label class="check"><input id="recursive" type="checkbox" /> включая вложенные</label>
+        <button type="button" id="scanBtn" class="primary">Сканировать</button>
+      </div>
+    </section>
+    <section>
+      <h2>2. JoyCaption</h2>
+      <p class="hint">Короткие теги для сортировки, не промпт для редактора. Не запускайте, пока идёт генерация Qwen (~15–25 мин на ~200 фото, если GPU свободен).</p>
+      <div class="row">
+        <button type="button" id="captionBtn" class="primary">Подписать</button>
+        <button type="button" id="pauseBtn">Пауза</button>
+        <button type="button" id="stopBtn" class="warn">Стоп</button>
+      </div>
+      <div class="bar"><span id="barFill"></span></div>
+      <p id="progressMsg" class="msg">Сначала сканируйте папку.</p>
+      <ul id="recentList" class="recent"></ul>
+    </section>
+    <section>
+      <h2>3. Папки</h2>
+      <p class="hint">Подписи JoyCaption без наших категорий. Группы называются по тексту подписей, без списка «люди / животные / аниме». Старые JSONL уже с прежним промптом — чтобы увидеть новый разбор, подпишите папку заново.</p>
+      <div class="row">
+        <button type="button" id="clusterBtn">Сгруппировать</button>
+      </div>
+      <div id="clusterBar" class="bar" hidden><span></span></div>
+      <p id="clusterStatus" class="msg">После подписей нажмите «Сгруппировать». Ollama может думать несколько минут — здесь будет таймер и пакеты.</p>
+      <p id="clusterNote" class="msg"></p>
+      <div id="groupsBox"></div>
+    </section>
+    <section>
+      <h2>4. Копировать</h2>
+      <label for="dest">Куда (по умолчанию папка/sorted)</label>
+      <input id="dest" type="text" placeholder="" />
+      <div class="row">
+        <button type="button" id="copyBtn" class="primary">Копировать в папки</button>
+      </div>
+      <p id="copyStatus" class="msg"></p>
+    </section>
+  </main>
+  <div id="toast" class="toast"></div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let pollTimer = null;
+    let lastPhase = "";
+    let lastState = null;
+    let clockTimer = null;
+
+    function toast(text, err) {
+      const el = $("toast");
+      el.textContent = text;
+      el.className = "toast show" + (err ? " err" : "");
+      setTimeout(() => el.classList.remove("show"), 5000);
+    }
+
+    function fmtTime(sec) {
+      sec = Math.max(0, Math.floor(sec || 0));
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return m + ":" + String(s).padStart(2, "0");
+    }
+
+    async function api(path, opts) {
+      const res = await fetch(path, opts);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = data.detail || data.message || res.statusText;
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+      return data;
+    }
+
+    function ensurePoll(ms) {
+      if (pollTimer) return;
+      pollTimer = setInterval(refresh, ms || 700);
+    }
+
+    function stopPoll() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    function showWork(on, done, title, detail) {
+      const box = $("workLive");
+      box.hidden = !on;
+      box.classList.toggle("on", on);
+      box.classList.toggle("done", !!done && on);
+      $("workLiveTitle").textContent = title || "Работа";
+      $("workLiveDetail").textContent = detail || "";
+    }
+
+    function render(s) {
+      lastState = s;
+      const busy = !!(s.busy || s.phase === "captioning" || s.phase === "copying" || s.phase === "clustering");
+      const badge = $("statusBadge");
+      if (busy) {
+        badge.textContent = (s.work_title || "Работа") + " · " + fmtTime(s.elapsed_sec);
+        badge.className = "badge busy";
+      } else if (s.gpu_busy) {
+        badge.textContent = "GPU занят очередью";
+        badge.className = "badge busy";
+      } else {
+        badge.textContent = s.ollama ? "готово" : "готово · нет Ollama";
+        badge.className = "badge ok";
+      }
+
+      if (busy) {
+        showWork(true, false, s.work_title || "Работа", (s.message || "идёт…") + " · " + fmtTime(s.elapsed_sec));
+      } else if (s.phase === "clustered" || s.phase === "done" || s.phase === "captioned") {
+        showWork(true, true, s.phase === "done" ? "Копирование завершено" : (s.phase === "clustered" ? "Группировка завершена" : "Подписи готовы"), s.message || "");
+      } else if (s.phase === "error") {
+        showWork(true, false, "Ошибка", s.error || s.message || "");
+        $("workLive").classList.remove("done");
+      } else {
+        showWork(false, false, "", "");
+      }
+
+      if (lastPhase && lastPhase !== s.phase) {
+        if (s.phase === "clustered") toast(s.message || "Группировка завершена");
+        if (s.phase === "done") toast(s.message || "Копирование завершено");
+        if (s.phase === "captioned") toast(s.message || "Подписи готовы");
+        if (s.phase === "error") toast(s.error || s.message || "Ошибка", true);
+      }
+      lastPhase = s.phase;
+
+      if (s.folder && !$("folder").matches(":focus")) $("folder").value = s.folder;
+      if (s.dest && !$("dest").matches(":focus")) $("dest").value = s.dest;
+      const total = s.total || 0;
+      const done = s.captioned || 0;
+      const pct = total ? Math.round((done / total) * 100) : 0;
+      $("barFill").style.width = pct + "%";
+      $("progressMsg").className = "msg" + (s.error ? " err" : "");
+      $("progressMsg").textContent = s.phase === "captioning"
+        ? (s.message || `${done} / ${total}`)
+        : (total ? `${done} / ${total} подписано` : "Сначала сканируйте папку.");
+
+      const recent = $("recentList");
+      recent.innerHTML = (s.recent || []).map((r) =>
+        `<li><strong>${r.name}</strong><div class="cap">${r.caption || ""}</div></li>`
+      ).join("");
+
+      const clustering = s.phase === "clustering";
+      $("clusterBar").hidden = !clustering;
+      $("clusterBar").classList.toggle("indet", clustering);
+      $("clusterStatus").className = "msg" + (s.phase === "error" ? " err" : "");
+      if (clustering) {
+        $("clusterStatus").textContent = (s.message || "Группировка запущена") + " · " + fmtTime(s.elapsed_sec);
+      } else if (s.phase === "clustered") {
+        $("clusterStatus").textContent = s.message || "Готово";
+      } else if (s.phase === "error" && (s.message || "").toLowerCase().includes("групп")) {
+        $("clusterStatus").textContent = s.message;
+      } else if (!s.groups || !s.groups.length) {
+        $("clusterStatus").textContent = "После подписей нажмите «Сгруппировать». Пока Ollama думает, здесь идут секунды и номер пакета.";
+      }
+      $("clusterNote").textContent = s.cluster_note || "";
+
+      const box = $("groupsBox");
+      box.innerHTML = (s.groups || []).map((g) => {
+        const files = (g.files || []).slice(0, 24).map((f) => `<li>${f}</li>`).join("");
+        const more = (g.files || []).length > 24 ? `<li>… ещё ${(g.files.length - 24)}</li>` : "";
+        return `<div class="group"><h3>${g.slug} <span>${(g.files || []).length}</span></h3><ul class="group-files">${files}${more}</ul></div>`;
+      }).join("");
+
+      $("copyStatus").textContent = s.phase === "copying"
+        ? (s.message || "Копирование…") + " · " + fmtTime(s.elapsed_sec)
+        : (s.phase === "done" ? (s.message || "") : "");
+
+      $("scanBtn").disabled = busy;
+      $("captionBtn").disabled = busy || !total || s.gpu_busy;
+      $("pauseBtn").disabled = s.phase !== "captioning";
+      $("stopBtn").disabled = s.phase !== "captioning";
+      $("clusterBtn").disabled = busy || done < 1;
+      $("copyBtn").disabled = busy || !(s.groups && s.groups.length);
+      if (busy) ensurePoll(700);
+      else stopPoll();
+    }
+
+    async function refresh() {
+      try { render(await api("/api/sort/status")); }
+      catch (e) { /* ignore */ }
+    }
+
+    function markLocalStart(title, detail) {
+      showWork(true, false, title, detail);
+      $("statusBadge").textContent = title;
+      $("statusBadge").className = "badge busy";
+      ensurePoll(700);
+    }
+
+    $("scanBtn").onclick = async () => {
+      try {
+        render(await api("/api/sort/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folder: $("folder").value, recursive: $("recursive").checked }),
+        }));
+        toast("Папка просканирована");
+      } catch (e) { toast(e.message, true); }
+    };
+    $("captionBtn").onclick = async () => {
+      markLocalStart("JoyCaption подписывает фото", "запуск модели…");
+      try { render(await api("/api/sort/caption/start", { method: "POST" })); }
+      catch (e) { toast(e.message, true); refresh(); }
+    };
+    $("pauseBtn").onclick = async () => {
+      try { render(await api("/api/sort/caption/pause", { method: "POST" })); }
+      catch (e) { toast(e.message, true); }
+    };
+    $("stopBtn").onclick = async () => {
+      try { render(await api("/api/sort/caption/stop", { method: "POST" })); }
+      catch (e) { toast(e.message, true); }
+    };
+    $("clusterBtn").onclick = async () => {
+      $("clusterBtn").disabled = true;
+      $("clusterBar").hidden = false;
+      $("clusterBar").classList.add("indet");
+      $("clusterStatus").textContent = "Запускаю группировку…";
+      markLocalStart("Группировка подписей", "запуск Ollama…");
+      toast("Группировка запущена");
+      try { render(await api("/api/sort/cluster", { method: "POST" })); }
+      catch (e) { toast(e.message, true); refresh(); }
+    };
+    $("copyBtn").onclick = async () => {
+      markLocalStart("Копирование в папки", "запуск…");
+      try {
+        render(await api("/api/sort/apply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dest: $("dest").value || null }),
+        }));
+      } catch (e) { toast(e.message, true); refresh(); }
+    };
+
+    clockTimer = setInterval(() => {
+      if (!lastState || !lastState.busy) return;
+      const s = lastState;
+      const t = fmtTime((s.elapsed_sec || 0) + 0);
+      $("workLiveDetail").textContent = (s.message || "идёт…") + " · " + fmtTime(s.elapsed_sec);
+    }, 400);
+
+    refresh();
+  </script>
+  <script src="/static/sw-register.js"></script>
+</body>
+</html>

@@ -1,0 +1,1036 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <title>Photone — AI Sound</title>
+  <link rel="icon" href="/static/favicon.svg?v=photone" type="image/svg+xml" />
+  <link rel="icon" href="/static/favicon.ico?v=photone" sizes="32x32" />
+  <style>
+    :root {
+      --bg: #0f1117; --panel: #171a22; --border: #2a3040; --text: #e8ecf4;
+      --muted: #8b93a7; --accent: #5b8def; --ok: #3ecf8e; --warn: #e8b84a; --err: #f07178;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    header {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); background: var(--panel);
+    }
+    .header-left { display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
+    header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+    .site-nav { display: flex; gap: 0.85rem; }
+    .site-nav a { color: var(--muted); text-decoration: none; }
+    .site-nav a:hover, .site-nav a.active { color: var(--text); font-weight: 600; }
+    .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #252a36; color: var(--muted); }
+    .badge.busy { background: #3d2e14; color: var(--warn); }
+    .badge.ok { background: #1a3328; color: var(--ok); }
+    main { max-width: 980px; margin: 0 auto; padding: 1.25rem; }
+    section {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 1rem 1.1rem 1.15rem; margin-bottom: 1rem;
+    }
+    h2 { margin: 0 0 0.75rem; font-size: 1rem; }
+    p.hint { color: var(--muted); margin: 0 0 0.85rem; font-size: 13px; }
+    label { display: block; margin: 0.5rem 0 0.35rem; color: var(--muted); font-size: 12px; }
+    textarea, select, input[type="number"] {
+      width: 100%; background: #0f1117; border: 1px solid var(--border); color: var(--text);
+      border-radius: 8px; padding: 0.5rem 0.65rem; font: inherit;
+    }
+    textarea { min-height: 6.5rem; resize: vertical; }
+    textarea.lyrics { min-height: 9rem; }
+    textarea#style { min-height: 4.2rem; }
+    .field-help { color: var(--muted); font-size: 12px; margin: 0.25rem 0 0.55rem; }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.35rem 0 0.55rem; }
+    .chip {
+      background: #12151c; border: 1px solid var(--border); color: var(--text);
+      border-radius: 999px; padding: 0.22rem 0.65rem; font-size: 12px; cursor: pointer;
+    }
+    .chip:hover { border-color: var(--accent); color: var(--accent); }
+    .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: flex-end; margin-top: 0.65rem; }
+    .row > div { min-width: 8rem; flex: 1; }
+    button {
+      background: #252a36; border: 1px solid var(--border); color: var(--text);
+      border-radius: 8px; padding: 0.45rem 0.8rem; cursor: pointer; font: inherit;
+    }
+    button.primary { background: #24365c; border-color: #3d5a99; }
+    button.warn { background: #3d2e14; border-color: #6a5420; color: var(--warn); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .bar { height: 8px; background: #252a36; border-radius: 99px; overflow: hidden; margin: 0.6rem 0 0.35rem; }
+    .bar > span { display: block; height: 100%; background: var(--accent); width: 0%; }
+    .msg { color: var(--muted); font-size: 13px; }
+    .msg.err { color: var(--err); }
+    .boards {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+      gap: 0.65rem;
+    }
+    .board {
+      background: #0f1117; border: 1px solid var(--border); border-radius: 10px;
+      padding: 0.75rem 0.8rem;
+    }
+    .board .k { color: var(--muted); font-size: 11px; letter-spacing: .02em; }
+    .board .v { font-size: 1.28rem; font-weight: 650; margin-top: 0.2rem; }
+    .board .s { color: var(--muted); font-size: 11px; margin-top: 0.15rem; }
+    audio { width: 100%; margin-top: 0.6rem; }
+    .lib-head { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; margin-bottom: 0.65rem; }
+    .crumbs { display: flex; flex-wrap: wrap; gap: 0.2rem; align-items: center; flex: 1; min-width: 12rem; }
+    .crumb {
+      background: transparent; border: 0; color: var(--accent); padding: 0.2rem 0.35rem; cursor: pointer;
+    }
+    .crumb.drop { outline: 1px dashed var(--accent); background: #1a2438; border-radius: 6px; }
+    .crumb-sep { color: var(--muted); }
+    .lib-path { color: var(--muted); font-size: 12px; margin: 0 0 0.55rem; word-break: break-all; }
+    .lib-list { display: flex; flex-direction: column; gap: 2px; overflow-x: auto; }
+    .lib-cols, .lib-row {
+      display: grid; grid-template-columns: 28px 28px minmax(8rem, 1fr) 9.4rem 9.4rem 4.4rem 4.8rem;
+      gap: 0.35rem; align-items: center;
+      padding: 0.35rem 0.45rem; width: 100%; text-align: left; font: inherit;
+    }
+    .lib-cols { color: var(--muted); font-size: 11px; padding-bottom: 0.2rem; }
+    .lib-cols button {
+      background: transparent; border: 0; color: var(--muted); padding: 0; text-align: left;
+      font: inherit; cursor: pointer;
+    }
+    .lib-cols button:hover, .lib-cols button.active { color: var(--text); }
+    .lib-row {
+      border-radius: 8px; border: 1px solid transparent; color: inherit; background: transparent;
+    }
+    .lib-row:hover { background: #12151c; }
+    .lib-row.dir { cursor: pointer; }
+    .lib-row.file { cursor: pointer; }
+    .lib-row.file.selected { border-color: var(--accent); background: #1a2438; }
+    .lib-row.file.fresh { border-color: var(--ok); background: #1a3328; }
+    .lib-row audio { grid-column: 1 / -1; width: 100%; margin: 0.15rem 0 0.1rem; }
+    .lib-row.drop { border-color: var(--accent); background: #1a2438; }
+    .source-chip {
+      display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+      background: #12151c; border: 1px solid var(--accent); border-radius: 8px;
+      padding: 0.45rem 0.6rem; margin: 0.55rem 0 0.35rem;
+    }
+    .source-chip .k { color: var(--muted); font-size: 12px; }
+    .source-chip .n { font-weight: 600; word-break: break-all; }
+    .source-chip button { padding: 0.15rem 0.5rem; }
+    .grip {
+      width: 22px; height: 22px; display: grid; place-items: center; cursor: grab; color: var(--muted);
+      border-radius: 4px; user-select: none;
+    }
+    .grip:active { cursor: grabbing; }
+    .ico { width: 22px; text-align: center; color: var(--muted); }
+    .lib-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lib-name-edit {
+      display: flex; align-items: center; gap: 0.15rem; min-width: 0;
+    }
+    .lib-name-edit input {
+      flex: 1; min-width: 5rem; width: 100%;
+      background: #0f1117; border: 1px solid var(--accent); color: var(--text);
+      border-radius: 6px; padding: 0.12rem 0.4rem; font: inherit;
+    }
+    .lib-ext { color: var(--muted); flex-shrink: 0; user-select: none; }
+    .lib-meta, .lib-date { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .lib-date { font-variant-numeric: tabular-nums; }
+    .lib-del {
+      background: #3d1c22; border-color: #6a2a34; color: var(--err);
+      padding: 0.2rem 0.5rem; font-size: 12px; justify-self: end;
+    }
+    .lib-del:hover { background: #5a2430; }
+    .lib-empty { color: var(--muted); padding: 0.5rem 0.2rem; }
+    .toast { position: fixed; bottom: 1rem; right: 1rem; background: #252a36; border: 1px solid var(--border); padding: 0.65rem 1rem; border-radius: 8px; display: none; max-width: 360px; z-index: 200; }
+    .toast.show { display: block; }
+    .toast.err { border-color: var(--err); color: var(--err); }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { text-align: left; padding: 0.35rem 0.4rem; border-bottom: 1px solid var(--border); color: var(--muted); }
+    th { color: var(--text); font-weight: 600; }
+    .modal-bg {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55);
+      z-index: 80; align-items: center; justify-content: center; padding: 1rem;
+    }
+    .modal-bg.open { display: flex; }
+    .modal {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 1.15rem 1.2rem; width: min(720px, 100%);
+    }
+    .modal h3 { margin: 0 0 0.55rem; font-size: 1.05rem; }
+    .modal .row { justify-content: flex-end; }
+    .approve-note { color: var(--warn); font-size: 12px; margin: 0 0 0.65rem; }
+    .approve-meta { color: var(--muted); font-size: 12px; margin: 0.25rem 0 0.4rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>Photone</h1>
+      <nav class="site-nav">
+        <a href="/">Обработка фото</a>
+        <a href="/sort">Сортировка фото</a>
+        <a href="/generate">Создание фото</a>
+        <a href="/music" class="active">AI Sound</a>
+        <a href="/speech">AI Голос</a>
+      </nav>
+    </div>
+    <span id="statusBadge" class="badge">загрузка…</span>
+  </header>
+  <main>
+    <section>
+      <h2>Скорость генерации</h2>
+      <p class="hint">Стена времени по локальным прогонам YuE2-3B на этой машине. RTF &lt; 1 значит быстрее реального времени.</p>
+      <div class="boards" id="boards"></div>
+    </section>
+    <section>
+      <h2>Генерация</h2>
+      <p class="hint" id="modelHint">YuE2 и ACE-Step — песни. MOSS-SoundEffect — короткие игровые звуки. Русский стиль/текст сначала через Ollama на английский (подтверждение), английский — сразу в модель. На 24 ГБ не крутите вместе с очередью фото.</p>
+      <label for="modelId">Модель</label>
+      <select id="modelId">
+        <option value="yue2-3b">YuE2-3B — полная песня, CUDA-graph</option>
+        <option value="acestep-1.5">ACE-Step 1.5 — turbo DiT</option>
+        <option value="moss-sfx-v2">MOSS-SoundEffect v2.0 — игровые SFX</option>
+      </select>
+      <div id="sourceWrap" hidden>
+        <div class="source-chip">
+          <span class="k">Исходник</span>
+          <span class="n" id="sourceName"></span>
+          <button type="button" id="sourceClear">Снять</button>
+        </div>
+        <label for="editInstr">Что изменить</label>
+        <p class="field-help">Что убрать или поменять в выбранном треке. YuE2 недоступен: он не читает готовый файл, только ACE-Step.</p>
+        <textarea id="editInstr" placeholder="убрать вокал, без хора, тише ударные"></textarea>
+      </div>
+      <label for="style" id="styleLabel">Стиль — как звучит</label>
+      <p class="field-help" id="styleHelp">Не сюжет и не слова. Через запятую: жанр, настроение, инструменты, вокал или instrumental, BPM. Сюда же — «римская заставка меню, без голоса».</p>
+      <textarea id="style" placeholder="ancient Roman cinematic, lyre, brass, timpani, instrumental, seamless game menu loop, 90 bpm"></textarea>
+      <div class="chips" id="styleChips"></div>
+      <div id="lyricsWrap">
+      <label for="lyrics" id="lyricsLabel">Текст — слова песни</label>
+      <p class="field-help" id="lyricsHelp">Только слова и теги вроде [Verse] / [Chorus]. Описание музыки сюда не пишите. Без вокала — [Instrumental] или оставьте пустым.</p>
+      <textarea id="lyrics" class="lyrics" placeholder="[Instrumental]"></textarea>
+      </div>
+      <div class="row">
+        <div id="cotWrap">
+          <label for="cot">Планирование (CoT)</label>
+          <select id="cot">
+            <option value="off">off — без партитуры, быстрее</option>
+            <option value="full">full — мелодия + аккорды</option>
+            <option value="melody">melody — только мелодия</option>
+          </select>
+        </div>
+        <div id="durWrap" hidden>
+          <label for="duration">Длительность, с</label>
+          <input id="duration" type="number" min="8" max="240" value="30" />
+        </div>
+        <div>
+          <label for="seed">Seed</label>
+          <input id="seed" type="number" min="0" value="42" />
+        </div>
+        <div id="langWrap">
+          <label for="vocalLang">Язык песни</label>
+          <select id="vocalLang">
+            <option value="en">English — кириллицу переводит Ollama</option>
+            <option value="ru">Русский — без перевода, ACE поёт по тексту</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <button type="button" id="goBtn" class="primary">Сгенерировать</button>
+        <button type="button" id="stopBtn" class="warn" disabled>Стоп</button>
+      </div>
+      <div class="bar"><span id="barFill"></span></div>
+      <p id="progressMsg" class="msg">Введите стиль и текст, затем «Сгенерировать».</p>
+    </section>
+    <section>
+      <h2>Библиотека</h2>
+      <p class="hint">Папки внутри F:\LocalAI\Music. Новый трек появляется в корне и сразу выделяется, плеер сам не стартует. Клик по строке — выбрать для правки (ACE-Step). Клик по имени — плеер в этой строке, двойной — переименовать. Файл двигайте за ⋮⋮.</p>
+      <div id="playerHold" hidden><audio id="player" controls></audio></div>
+      <div class="lib-head">
+        <button type="button" id="libUp">↑ Наверх</button>
+        <nav class="crumbs" id="libCrumbs"></nav>
+        <button type="button" id="libMkdir">Новая папка</button>
+      </div>
+      <p class="lib-path" id="libPath"></p>
+      <div class="lib-cols" id="libCols"></div>
+      <div class="lib-list" id="libList"></div>
+    </section>
+    <section>
+      <h2>История прогонов</h2>
+      <div style="overflow:auto">
+        <table>
+          <thead>
+            <tr><th>Когда</th><th>Модель</th><th>CoT</th><th>Генерация</th><th>Трек</th><th>RTF</th><th>Загрузка</th><th>VRAM</th></tr>
+          </thead>
+          <tbody id="histBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <div id="toast" class="toast"></div>
+  <div class="modal-bg" id="approveModal">
+    <div class="modal">
+      <h3>Проверьте английский промпт</h3>
+      <p class="approve-note" id="approveNote" hidden></p>
+      <label for="approveStyle" id="approveStyleLabel">Стиль (EN)</label>
+      <textarea id="approveStyle"></textarea>
+      <div id="approveLyricsWrap">
+        <div class="approve-meta" id="approveMeta">Текст песни (EN), теги [Verse]/[Chorus] сохраняются</div>
+        <textarea id="approveLyrics" class="lyrics"></textarea>
+      </div>
+      <div id="approveEditWrap" hidden>
+        <label for="approveEdit">Правка (EN)</label>
+        <textarea id="approveEdit"></textarea>
+      </div>
+      <div class="row">
+        <button type="button" id="approveCancelBtn">Отмена</button>
+        <button type="button" id="approveOkBtn" class="primary">Подтвердить и сгенерировать</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let pollTimer = null;
+    let lastPhase = "";
+    let libPath = "";
+    let libData = null;
+    let libSource = null;
+    let libSort = { key: "name", dir: "asc" };
+    let playingPath = null;
+    let freshPath = null;
+    let showFreshPlayer = false;
+    let scrollFresh = false;
+
+    function fmtSec(v) {
+      if (v == null || Number.isNaN(Number(v))) return "—";
+      const n = Number(v);
+      if (n < 10) return n.toFixed(1) + " с";
+      if (n < 90) return Math.round(n) + " с";
+      const m = Math.floor(n / 60);
+      const s = Math.round(n % 60);
+      return m + " мин " + s + " с";
+    }
+    function board(k, v, s) {
+      return `<div class="board"><div class="k">${k}</div><div class="v">${v}</div>${s ? `<div class="s">${s}</div>` : ""}</div>`;
+    }
+    function toast(text, err) {
+      const el = $("toast");
+      el.textContent = text;
+      el.className = "toast show" + (err ? " err" : "");
+      setTimeout(() => el.classList.remove("show"), 4500);
+    }
+    async function api(path, opts) {
+      const res = await fetch(path, opts);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = data.detail || res.statusText;
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+      return data;
+    }
+    function ensurePoll() {
+      if (!pollTimer) pollTimer = setInterval(refresh, 800);
+    }
+    function stopPoll() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+    function renderBoards(b) {
+      const rtfHint = "генерация / длительность трека";
+      $("boards").innerHTML = [
+        board("Последняя генерация", fmtSec(b.last_generate_sec), b.last_model_id || "wall-clock"),
+        board("Средняя генерация", fmtSec(b.avg_generate_sec), (b.count || 0) + " успешных"),
+        board("Длина трека", fmtSec(b.last_audio_sec), "последний"),
+        board("RTF последний", b.last_rtf == null ? "—" : Number(b.last_rtf).toFixed(2) + "×", rtfHint),
+        board("RTF средний", b.avg_rtf == null ? "—" : Number(b.avg_rtf).toFixed(2) + "×", "по успешным"),
+        board("Загрузка модели", fmtSec(b.last_load_sec), "первый раз в процессе"),
+        board("Пик VRAM", b.last_vram_gb == null ? "—" : b.last_vram_gb + " ГБ", "последний прогон"),
+        board("Песен", String(b.count || 0), b.last_cot ? ("cot=" + b.last_cot) : ""),
+      ].join("");
+      const body = $("histBody");
+      const hist = b.history || [];
+      body.innerHTML = hist.slice().reverse().map((r) =>
+        `<tr>
+          <td>${r.ts || ""}</td>
+          <td>${r.model_id || ""}</td>
+          <td>${r.cot || ""}</td>
+          <td>${fmtSec(r.generate_sec)}</td>
+          <td>${fmtSec(r.audio_sec)}</td>
+          <td>${r.rtf == null ? "—" : Number(r.rtf).toFixed(2)}</td>
+          <td>${fmtSec(r.load_sec)}</td>
+          <td>${r.vram_gb == null ? "—" : r.vram_gb}</td>
+        </tr>`
+      ).join("") || `<tr><td colspan="8">Пока нет успешных прогонов</td></tr>`;
+    }
+    function render(s, boards) {
+      const busy = !!s.busy;
+      $("statusBadge").textContent = busy ? (s.message || "GPU") : (s.gpu_busy ? "GPU занят" : "готово");
+      $("statusBadge").className = "badge " + (busy || s.gpu_busy ? "busy" : "ok");
+      $("barFill").style.width = (s.progress || 0) + "%";
+      $("progressMsg").className = "msg" + (s.error ? " err" : "");
+      $("progressMsg").textContent = s.message || "";
+      $("goBtn").disabled = busy || s.gpu_busy;
+      $("stopBtn").disabled = !busy;
+      if (lastPhase && lastPhase !== s.phase) {
+        if (s.phase === "done") toast("Песня готова");
+        if (s.phase === "error") toast(s.error || "Ошибка", true);
+      }
+      if (lastPhase && lastPhase !== s.phase && s.phase === "done") {
+        if (s.result_rel) {
+          freshPath = s.result_rel;
+          showFreshPlayer = true;
+          scrollFresh = true;
+          const slash = freshPath.lastIndexOf("/");
+          loadLibrary(slash >= 0 ? freshPath.slice(0, slash) : "");
+        } else {
+          loadLibrary(libPath);
+        }
+      }
+      lastPhase = s.phase;
+      if (boards) renderBoards(boards);
+      if (busy) ensurePoll(); else stopPoll();
+    }
+    async function refresh() {
+      try {
+        const [st, boards] = await Promise.all([api("/api/music/status"), api("/api/music/stats")]);
+        render(st, boards);
+      } catch (e) {}
+    }
+    function hasCyrillic(text) {
+      return /[\u0400-\u04FF]/.test(text || "");
+    }
+    function startBody(style, lyrics, edit) {
+      const modelId = $("modelId").value;
+      const moss = modelId === "moss-sfx-v2";
+      const source = libSource && libSource.path;
+      return {
+        style,
+        lyrics: moss ? "" : lyrics,
+        cot: $("cot").value,
+        seed: Number($("seed").value || 42),
+        model_id: source ? "acestep-1.5" : modelId,
+        duration_sec: (modelId === "acestep-1.5" || moss)
+          ? Number($("duration").value || (moss ? 4 : 30))
+          : null,
+        source_path: source || "",
+        edit: source ? (edit || "") : "",
+        lang: moss ? "en" : $("vocalLang").value,
+      };
+    }
+    async function launchMusic(style, lyrics, edit) {
+      const st = await api("/api/music/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(startBody(style, lyrics, edit)),
+      });
+      render(st);
+      toast(libSource ? "Правка запущена" : "Генерация запущена");
+      ensurePoll();
+    }
+    $("goBtn").onclick = async () => {
+      const modelId = $("modelId").value;
+      const moss = modelId === "moss-sfx-v2";
+      const style = $("style").value;
+      const lyrics = moss ? "" : $("lyrics").value;
+      const edit = libSource ? $("editInstr").value : "";
+      if (libSource && !style.trim() && !edit.trim()) {
+        toast("Укажите стиль или что изменить", true);
+        return;
+      }
+      const lang = moss ? "en" : $("vocalLang").value;
+      const needOllama = (moss || lang === "en") && (hasCyrillic(style) || hasCyrillic(lyrics) || hasCyrillic(edit));
+      if (!needOllama) {
+        try { await launchMusic(style, lyrics, edit); }
+        catch (e) { toast(e.message, true); }
+        return;
+      }
+      $("goBtn").disabled = true;
+      $("progressMsg").textContent = "Перевод через Ollama…";
+      try {
+        const prep = await api("/api/music/prepare", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ style, lyrics, model_id: modelId, edit, lang }),
+        });
+        $("approveStyleLabel").textContent = moss ? "Описание звука (EN)" : "Стиль (EN)";
+        $("approveStyle").value = prep.style || "";
+        $("approveLyricsWrap").hidden = moss;
+        $("approveLyrics").value = moss ? "" : (prep.lyrics || "");
+        $("approveEditWrap").hidden = !libSource;
+        $("approveEdit").value = libSource ? (prep.edit || "") : "";
+        const note = $("approveNote");
+        if (prep.note) {
+          note.hidden = false;
+          note.textContent = prep.note;
+        } else {
+          note.hidden = true;
+          note.textContent = "";
+        }
+        $("approveModal").classList.add("open");
+        $("progressMsg").textContent = "Проверьте перевод и подтвердите.";
+      } catch (e) {
+        toast(e.message, true);
+        $("progressMsg").textContent = e.message || "Не удалось перевести";
+        $("progressMsg").className = "msg err";
+      } finally {
+        $("goBtn").disabled = false;
+      }
+    };
+    $("approveCancelBtn").onclick = () => {
+      $("approveModal").classList.remove("open");
+      $("progressMsg").textContent = "Перевод отменён.";
+    };
+    $("approveOkBtn").onclick = async () => {
+      const style = $("approveStyle").value;
+      const lyrics = $("approveLyrics").value;
+      const edit = $("approveEdit").value;
+      $("approveModal").classList.remove("open");
+      try { await launchMusic(style, lyrics, edit); }
+      catch (e) { toast(e.message, true); }
+    };
+    const SONG_PRESETS = [
+      {
+        label: "Римская заставка меню",
+        style: "ancient Roman cinematic, lyre and aulos, distant brass fanfare, timpani, no vocals, instrumental, seamless looping game main-menu theme, 90 bpm",
+        lyrics: "[Instrumental]",
+        duration: 180,
+      },
+      {
+        label: "Фолк с вокалом",
+        style: "English, acoustic folk, warm female vocal, nylon guitar, light percussion, 90 bpm",
+        lyrics: "[Verse]\nHello morning light\nA quiet simple song\n[Chorus]\nSing it once and let it go",
+      },
+      {
+        label: "Эпический оркестр",
+        style: "epic cinematic orchestra, heroic brass, choir pads, taiko drums, instrumental, trailer hybrid, 100 bpm",
+        lyrics: "[Instrumental]",
+      },
+      {
+        label: "Lo-fi",
+        style: "lo-fi hip hop, dusty drums, warm electric piano, vinyl crackle, instrumental, chill study beat, 75 bpm",
+        lyrics: "[Instrumental]",
+      },
+      {
+        label: "Synthwave",
+        style: "80s synthwave, analog supersaw, gated reverb drums, neon bass, instrumental, night drive, 110 bpm",
+        lyrics: "[Instrumental]",
+      },
+      {
+        label: "Джаз",
+        style: "small combo jazz, upright bass, brushed drums, warm piano, muted trumpet, instrumental, smoky lounge, 96 bpm",
+        lyrics: "[Instrumental]",
+      },
+      {
+        label: "Рок",
+        style: "classic rock, overdriven electric guitars, punchy drums, male vocal, anthemic chorus, 128 bpm",
+        lyrics: "[Verse]\nCity lights and open road\n[Chorus]\nTurn it up and let it roll",
+      },
+      {
+        label: "Электроника",
+        style: "modern electronic, punchy kick, sidechain synth pads, arpeggio lead, instrumental, club energy, 124 bpm",
+        lyrics: "[Instrumental]",
+      },
+    ];
+    const SFX_PRESETS = [
+      { label: "Удар меча", style: "A sharp metal sword hit, short clang, dry game Foley, no music, no voice" },
+      { label: "Шаги по камню", style: "Heavy boots walking on stone dungeon floor, short footsteps, dry Foley, no music" },
+      { label: "Взрыв", style: "Close game explosion, debris and bass thump, short, no music, no voice" },
+      { label: "Ветер", style: "Cold wind through canyon, air whoosh, looping ambience, no music, no voice" },
+      { label: "UI клик", style: "Crisp UI button click, short wooden tap, dry interface Foley" },
+    ];
+    function applyPreset(p) {
+      $("style").value = p.style;
+      $("style").dataset.sfx = $("modelId").value === "moss-sfx-v2" ? "1" : "";
+      if (p.lyrics != null) $("lyrics").value = p.lyrics;
+      if (p.duration != null && !$("durWrap").hidden) $("duration").value = p.duration;
+    }
+    function renderChips(list) {
+      const box = $("styleChips");
+      box.innerHTML = list.map((p, i) =>
+        `<button type="button" class="chip" data-i="${i}">${p.label}</button>`
+      ).join("");
+      box.querySelectorAll(".chip").forEach((btn) => {
+        btn.onclick = () => applyPreset(list[Number(btn.dataset.i)]);
+      });
+    }
+    function markSelectedRows() {
+      document.querySelectorAll(".lib-row.file").forEach((el) => {
+        el.classList.toggle("selected", !!(libSource && el.dataset.path === libSource.path));
+      });
+    }
+    function clearSource() {
+      libSource = null;
+      syncModelUi();
+      markSelectedRows();
+    }
+    function selectSource(file) {
+      libSource = { path: file.path, name: file.name };
+      syncModelUi();
+      markSelectedRows();
+    }
+    function toggleSource(file) {
+      if (libSource && libSource.path === file.path) clearSource();
+      else selectSource(file);
+    }
+    function syncModelUi() {
+      const locked = !!libSource;
+      const yueOpt = $("modelId").querySelector('option[value="yue2-3b"]');
+      const mossOpt = $("modelId").querySelector('option[value="moss-sfx-v2"]');
+      if (yueOpt) yueOpt.disabled = locked;
+      if (mossOpt) mossOpt.disabled = locked;
+      $("sourceWrap").hidden = !locked;
+      $("sourceName").textContent = locked ? libSource.name : "";
+      $("goBtn").textContent = locked ? "Править" : "Сгенерировать";
+      if (locked && $("modelId").value !== "acestep-1.5") {
+        $("modelId").value = "acestep-1.5";
+      }
+      const id = $("modelId").value;
+      const ace = id === "acestep-1.5";
+      const moss = id === "moss-sfx-v2";
+      $("cotWrap").hidden = ace || moss;
+      $("lyricsWrap").hidden = moss;
+      $("langWrap").hidden = moss;
+      $("durWrap").hidden = locked || !(ace || moss);
+      const ru = !moss && $("vocalLang").value === "ru";
+      $("lyricsHelp").textContent = ru
+        ? "Русский текст как есть, без Ollama. Теги [Куплет]/[Припев] или [Verse]/[Chorus]. Без вокала — [Instrumental]."
+        : "Только слова и теги вроде [Verse] / [Chorus]. Описание музыки сюда не пишите. Кириллица уйдёт в Ollama. Без вокала — [Instrumental] или пусто.";
+      $("styleLabel").textContent = moss ? "Описание звука — что слышно" : "Стиль — как звучит";
+      $("styleHelp").textContent = moss
+        ? "Одно короткое описание эффекта: материал, действие, пространство. Не жанр песни."
+        : "Не сюжет и не слова. Через запятую: жанр, настроение, инструменты, вокал или instrumental, BPM. Сюда — «римская заставка меню, без голоса».";
+      $("style").placeholder = moss
+        ? "sharp metal sword hit, short clang, dry game Foley, no music"
+        : "ancient Roman cinematic, lyre, brass, timpani, instrumental, seamless game menu loop, 90 bpm";
+      const dur = $("duration");
+      if (moss) {
+        dur.min = 1; dur.max = 30;
+        if (Number(dur.value) > 30 || Number(dur.value) < 1) dur.value = 4;
+      } else if (ace) {
+        dur.min = 8; dur.max = 240;
+        if (Number(dur.value) < 8) dur.value = 30;
+      }
+      renderChips(moss ? SFX_PRESETS : SONG_PRESETS);
+      if (moss) {
+        $("modelHint").textContent = "MOSS-SoundEffect v2.0: только короткие SFX, не музыка меню. Русское описание — через Ollama. 1–30 с.";
+        if (!$("style").dataset.sfx) {
+          $("style").value = SFX_PRESETS[0].style;
+          $("style").dataset.sfx = "1";
+        }
+      } else if (ace) {
+        $("modelHint").textContent = locked
+          ? "Правка выбранного файла через ACE-Step cover. Язык песни задаёт, переводить ли правку через Ollama."
+          : (ru
+            ? "ACE-Step 1.5, язык русский: текст не переводится, vocal_language=ru. Стиль можно оставить английским. YuE2 для русского вокала слабый."
+            : "ACE-Step 1.5, язык English: кириллица через Ollama, потом в модель. Длительность справа.");
+      } else {
+        $("modelHint").textContent = ru
+          ? "YuE2-3B, язык русский: Ollama не вызывается. Вокал по-русски у YuE2 обычно слабый — для песни берите ACE-Step."
+          : "YuE2-3B, язык English: кириллица через Ollama. Длину трека модель выбирает сама.";
+      }
+    }
+    $("vocalLang").onchange = syncModelUi;
+    $("modelId").onchange = () => {
+      if (libSource && $("modelId").value !== "acestep-1.5") {
+        $("modelId").value = "acestep-1.5";
+        toast("Для правки файла нужен ACE-Step", true);
+      }
+      syncModelUi();
+    };
+    $("sourceClear").onclick = () => clearSource();
+    $("stopBtn").onclick = async () => {
+      try { render(await api("/api/music/stop", { method: "POST" })); }
+      catch (e) { toast(e.message, true); }
+    };
+    function fmtSize(n) {
+      if (n < 1024) return n + " Б";
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " КБ";
+      return (n / (1024 * 1024)).toFixed(1) + " МБ";
+    }
+    let libRename = null;
+    let playTimer = null;
+    function splitFileName(name) {
+      const i = (name || "").lastIndexOf(".");
+      if (i <= 0) return { stem: name || "", ext: "" };
+      return { stem: name.slice(0, i), ext: name.slice(i) };
+    }
+    function cancelRename() {
+      if (!libRename) return;
+      const restore = libRename.restore;
+      libRename = null;
+      restore();
+    }
+    function startRename(nameEl, f) {
+      if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+      cancelRename();
+      const { stem, ext } = splitFileName(f.name);
+      const wrap = document.createElement("span");
+      wrap.className = "lib-name-edit";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = stem;
+      input.spellcheck = false;
+      input.setAttribute("aria-label", "Имя файла");
+      const extEl = document.createElement("span");
+      extEl.className = "lib-ext";
+      extEl.textContent = ext;
+      wrap.append(input, extEl);
+      const restore = () => { if (wrap.parentNode) wrap.replaceWith(nameEl); };
+      libRename = { wrap, restore };
+      nameEl.replaceWith(wrap);
+      input.focus();
+      input.select();
+      const stop = (e) => e.stopPropagation();
+      wrap.addEventListener("click", stop);
+      wrap.addEventListener("dblclick", stop);
+      wrap.addEventListener("mousedown", stop);
+      input.addEventListener("keydown", async (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          cancelRename();
+          return;
+        }
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        const next = input.value.trim();
+        if (!next || next === stem) {
+          cancelRename();
+          return;
+        }
+        releasePlayer(f.path);
+        try {
+          const data = await retryLocked(() => api("/api/music/library/rename", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ src: f.path, name: next, cwd: libPath }),
+          }));
+          const slash = f.path.lastIndexOf("/");
+          const newPath = (slash >= 0 ? f.path.slice(0, slash + 1) : "") + next + ext;
+          if (libSource && libSource.path === f.path) libSource = { path: newPath, name: next + ext };
+          if (freshPath === f.path) freshPath = newPath;
+          libRename = null;
+          renderLibrary(data);
+          toast("Файл переименован");
+        } catch (err) {
+          toast(err.message, true);
+          cancelRename();
+        }
+      });
+    }
+    document.addEventListener("mousedown", (e) => {
+      if (!libRename) return;
+      if (libRename.wrap.contains(e.target)) return;
+      cancelRename();
+    });
+    function bindDrop(el, destPath) {
+      el.addEventListener("dragover", (e) => {
+        if (![...e.dataTransfer.types].includes("text/plain")) return;
+        e.preventDefault();
+        el.classList.add("drop");
+      });
+      el.addEventListener("dragleave", () => el.classList.remove("drop"));
+      el.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        el.classList.remove("drop");
+        const src = e.dataTransfer.getData("text/plain");
+        let dest = destPath;
+        if (destPath === "__parent__") {
+          if (!libData || libData.parent == null) return;
+          dest = libData.parent;
+        }
+        if (!src || src === dest) return;
+        try {
+          libData = await api("/api/music/library/move", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ src, dest: dest || "", cwd: libPath }),
+          });
+          renderLibrary(libData);
+          toast("Файл перемещён");
+        } catch (err) { toast(err.message, true); }
+      });
+    }
+    function fmtDate(ts) {
+      if (ts == null || ts === "") return "—";
+      const d = new Date(Number(ts) * 1000);
+      if (Number.isNaN(d.getTime())) return "—";
+      const p = (n) => String(n).padStart(2, "0");
+      return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+    function sortItems(items) {
+      const { key, dir } = libSort;
+      const mul = dir === "desc" ? -1 : 1;
+      return items.slice().sort((a, b) => {
+        let av;
+        let bv;
+        if (key === "name") {
+          av = (a.name || "").toLowerCase();
+          bv = (b.name || "").toLowerCase();
+          return av < bv ? -mul : av > bv ? mul : 0;
+        }
+        av = Number(a[key] || 0);
+        bv = Number(b[key] || 0);
+        if (av === bv) {
+          const an = (a.name || "").toLowerCase();
+          const bn = (b.name || "").toLowerCase();
+          return an < bn ? -1 : an > bn ? 1 : 0;
+        }
+        return (av - bv) * mul;
+      });
+    }
+    function renderLibCols() {
+      const cols = $("libCols");
+      const labels = [
+        ["name", "Имя"],
+        ["ctime", "Создан"],
+        ["mtime", "Изменён"],
+        ["size", "Размер"],
+      ];
+      cols.innerHTML = "<span></span><span></span>" + labels.map(([key, label]) => {
+        const on = libSort.key === key;
+        const mark = on ? (libSort.dir === "desc" ? " ↓" : " ↑") : "";
+        return `<button type="button" data-sort="${key}" class="${on ? "active" : ""}">${label}${mark}</button>`;
+      }).join("") + "<span></span>";
+      cols.querySelectorAll("[data-sort]").forEach((btn) => {
+        btn.onclick = () => {
+          const key = btn.dataset.sort;
+          if (libSort.key === key) libSort.dir = libSort.dir === "asc" ? "desc" : "asc";
+          else {
+            libSort.key = key;
+            libSort.dir = key === "name" ? "asc" : "desc";
+          }
+          if (libData) renderLibrary(libData);
+        };
+      });
+    }
+    function parkPlayer() {
+      const player = $("player");
+      const hold = $("playerHold");
+      if (player && hold && player.parentElement !== hold) hold.appendChild(player);
+    }
+    async function retryLocked(run) {
+      let lastErr = null;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        try {
+          return await run();
+        } catch (err) {
+          lastErr = err;
+          const msg = String(err && err.message || "");
+          const locked = /WinError 32|занят другим процессом|being used by another process/i.test(msg);
+          if (!locked || attempt === 11) throw lastErr;
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      }
+      throw lastErr;
+    }
+    function releasePlayer(path) {
+      const player = $("player");
+      if (!player) return;
+      const current = player.getAttribute("data-path");
+      if (path && current && current !== path) return;
+      player.pause();
+      player.removeAttribute("src");
+      player.removeAttribute("data-src");
+      player.removeAttribute("data-path");
+      player.load();
+      player.hidden = true;
+      playingPath = null;
+      parkPlayer();
+    }
+    function mountPlayer(row, path, autoplay, keep) {
+      const player = $("player");
+      const same = player.getAttribute("data-path") === path && !!player.src;
+      row.appendChild(player);
+      player.hidden = false;
+      if (!same) {
+        player.pause();
+        const src = "/api/music/file?path=" + encodeURIComponent(path);
+        player.src = src;
+        player.setAttribute("data-path", path);
+        player.setAttribute("data-src", src);
+      }
+      playingPath = path;
+      if (autoplay) player.play().catch(() => {});
+      else if (!keep) player.pause();
+    }
+    function renderLibrary(data) {
+      cancelRename();
+      parkPlayer();
+      libData = data;
+      libPath = data.path || "";
+      $("libPath").textContent = data.root + (libPath ? "\\" + libPath.replaceAll("/", "\\") : "");
+      $("libUp").disabled = !libPath;
+      const crumbs = $("libCrumbs");
+      crumbs.innerHTML = "";
+      (data.crumbs || []).forEach((c, i) => {
+        if (i) {
+          const sep = document.createElement("span");
+          sep.className = "crumb-sep";
+          sep.textContent = "/";
+          crumbs.appendChild(sep);
+        }
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "crumb";
+        b.textContent = c.name;
+        b.onclick = () => loadLibrary(c.path);
+        bindDrop(b, c.path);
+        crumbs.appendChild(b);
+      });
+      renderLibCols();
+      const list = $("libList");
+      list.innerHTML = "";
+      const dirs = sortItems(data.dirs || []);
+      const files = sortItems(data.files || []);
+      if (!dirs.length && !files.length) {
+        const empty = document.createElement("div");
+        empty.className = "lib-empty";
+        empty.textContent = "Папка пустая — сюда попадают новые треки, если вы в корне, или перетащите файл из другого раздела.";
+        list.appendChild(empty);
+        return;
+      }
+      dirs.forEach((d) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "lib-row dir";
+        const spacer = document.createElement("span");
+        const ico = document.createElement("span");
+        ico.className = "ico";
+        ico.textContent = "📁";
+        const name = document.createElement("span");
+        name.className = "lib-name";
+        name.textContent = d.name;
+        const created = document.createElement("span");
+        created.className = "lib-date";
+        created.textContent = fmtDate(d.ctime);
+        const changed = document.createElement("span");
+        changed.className = "lib-date";
+        changed.textContent = fmtDate(d.mtime);
+        const meta = document.createElement("span");
+        meta.className = "lib-meta";
+        meta.textContent = "папка";
+        row.append(spacer, ico, name, created, changed, meta, document.createElement("span"));
+        row.onclick = () => loadLibrary(d.path);
+        bindDrop(row, d.path);
+        list.appendChild(row);
+      });
+      files.forEach((f) => {
+        const row = document.createElement("div");
+        row.className = "lib-row file" + (libSource && libSource.path === f.path ? " selected" : "");
+        row.dataset.path = f.path;
+        row.setAttribute("role", "group");
+        row.title = "Клик по строке — выбрать для правки";
+        if (freshPath && f.path === freshPath) row.classList.add("fresh");
+        row.onclick = (e) => {
+          if (e.target.closest(".grip, .lib-name, .lib-name-edit, .lib-del, audio")) return;
+          toggleSource(f);
+        };
+        const grip = document.createElement("span");
+        grip.className = "grip";
+        grip.draggable = true;
+        grip.title = "Перетащить в папку";
+        grip.textContent = "⋮⋮";
+        grip.addEventListener("dragstart", (e) => {
+          e.dataTransfer.setData("text/plain", f.path);
+          e.dataTransfer.effectAllowed = "move";
+        });
+        const ico = document.createElement("span");
+        ico.className = "ico";
+        ico.textContent = "♪";
+        const name = document.createElement("span");
+        name.className = "lib-name";
+        name.textContent = f.name;
+        name.setAttribute("role", "button");
+        name.tabIndex = 0;
+        name.title = "Клик — слушать, двойной клик — переименовать";
+        name.style.cursor = "pointer";
+        name.onclick = (e) => {
+          if (e.detail > 1) return;
+          if (playTimer) clearTimeout(playTimer);
+          playTimer = setTimeout(() => {
+            playTimer = null;
+            mountPlayer(row, f.path, true, false);
+          }, 280);
+        };
+        name.ondblclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          startRename(name, f);
+        };
+        const created = document.createElement("span");
+        created.className = "lib-date";
+        created.textContent = fmtDate(f.ctime);
+        const changed = document.createElement("span");
+        changed.className = "lib-date";
+        changed.textContent = fmtDate(f.mtime);
+        const meta = document.createElement("span");
+        meta.className = "lib-meta";
+        meta.textContent = fmtSize(f.size || 0);
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "lib-del";
+        del.textContent = "Удалить";
+        del.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          releasePlayer(f.path);
+          try {
+            const data = await retryLocked(() => api("/api/music/library/delete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ src: f.path, cwd: libPath }),
+            }));
+            if (libSource && libSource.path === f.path) clearSource();
+            if (freshPath === f.path) freshPath = null;
+            renderLibrary(data);
+          } catch (err) {
+            toast(err.message, true);
+          }
+        };
+        row.append(grip, ico, name, created, changed, meta, del);
+        list.appendChild(row);
+      });
+      const fileRows = () => [...list.querySelectorAll(".lib-row.file")];
+      if (freshPath && showFreshPlayer) {
+        const freshRow = fileRows().find((el) => el.dataset.path === freshPath);
+        if (freshRow) {
+          freshRow.classList.add("fresh");
+          mountPlayer(freshRow, freshPath, false, false);
+          if (scrollFresh) freshRow.scrollIntoView({ block: "nearest" });
+        }
+        showFreshPlayer = false;
+        scrollFresh = false;
+      } else if (playingPath) {
+        const playingRow = fileRows().find((el) => el.dataset.path === playingPath);
+        if (playingRow) mountPlayer(playingRow, playingPath, false, true);
+      }
+    }
+    async function loadLibrary(path) {
+      try {
+        renderLibrary(await api("/api/music/library?path=" + encodeURIComponent(path || "")));
+      } catch (e) { toast(e.message, true); }
+    }
+    $("libUp").onclick = () => {
+      if (!libData || libData.parent == null) return;
+      loadLibrary(libData.parent);
+    };
+    bindDrop($("libUp"), "__parent__");
+    $("libMkdir").onclick = async () => {
+      const name = window.prompt("Имя папки");
+      if (!name) return;
+      try {
+        renderLibrary(await api("/api/music/library/mkdir", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: libPath, name }),
+        }));
+      } catch (e) { toast(e.message, true); }
+    };
+    (async () => {
+      const meta = await api("/api/music/status");
+      $("style").value = meta.style || "";
+      $("lyrics").value = meta.lyrics || "";
+      $("cot").value = meta.cot || "off";
+      $("seed").value = meta.seed || 42;
+      $("modelId").value = meta.model_id || "yue2-3b";
+      $("vocalLang").value = meta.lang === "ru" ? "ru" : "en";
+      syncModelUi();
+      await Promise.all([refresh(), loadLibrary("")]);
+    })().catch((e) => toast(e.message, true));
+  </script>
+  <script src="/static/sw-register.js"></script>
+</body>
+</html>

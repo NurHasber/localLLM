@@ -4,9 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
-  <title>Photo Edit — очередь</title>
-  <!-- ui-build: 2026-08-19-job-thumbs -->
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <title>Photone — Обработка фото</title>
+  <!-- ui-build: 2026-09-28-tray -->
+  <link rel="icon" href="/static/favicon.svg?v=photone" type="image/svg+xml" />
+  <link rel="icon" href="/static/favicon.ico?v=photone" sizes="32x32" />
   <style>
     :root {
       --bg: #0f1117;
@@ -37,7 +38,12 @@
       border-bottom: 1px solid var(--border);
       background: var(--panel);
     }
+    .header-left { display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
     header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+    .site-nav { display: flex; gap: 0.85rem; }
+    .site-nav a { color: var(--muted); text-decoration: none; }
+    .site-nav a:hover, .site-nav a.active { color: var(--text); }
+    .site-nav a.active { font-weight: 600; }
     .badge {
       font-size: 12px;
       padding: 2px 8px;
@@ -47,6 +53,16 @@
     }
     .badge.busy { background: #3d2e14; color: var(--warn); }
     .badge.ok { background: #1a3328; color: var(--ok); }
+    .sort-live {
+      display: none;
+      padding: 0.55rem 1.25rem;
+      background: #241c10;
+      border-bottom: 1px solid var(--border);
+      color: var(--warn);
+      font-size: 13px;
+    }
+    .sort-live a { color: var(--text); }
+    .sort-live.on { display: block; }
     main {
       max-width: 960px;
       margin: 0 auto;
@@ -81,7 +97,57 @@
     button:hover:not(:disabled) { border-color: var(--accent); }
     button:disabled { opacity: 0.45; cursor: not-allowed; }
     button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-    button.danger { border-color: #6b3038; color: var(--err); }
+    button.warn {
+      background: #3d2e14;
+      border-color: #a67c2a;
+      color: #f0d090;
+    }
+    button.warn:hover:not(:disabled) { border-color: var(--warn); color: #ffe7a8; }
+    .modal-bg.warn-overlay { background: rgba(28, 18, 6, 0.78); }
+    .modal.warn-modal {
+      width: min(520px, 100%);
+      border-color: #a67c2a;
+      background: linear-gradient(180deg, #2a2214 0%, var(--panel) 42%);
+      box-shadow: 0 0 0 1px rgba(232, 184, 74, 0.25), 0 18px 40px rgba(0,0,0,0.45);
+    }
+    .modal.warn-modal h3 {
+      color: var(--warn);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .modal.warn-modal h3::before {
+      content: "!";
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.5rem;
+      height: 1.5rem;
+      border-radius: 999px;
+      background: var(--warn);
+      color: #1a1408;
+      font-size: 0.95rem;
+      font-weight: 800;
+    }
+    .warn-modal .warn-lead {
+      margin: 0 0 0.75rem;
+      color: #e8dcc0;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    .warn-modal ul {
+      margin: 0;
+      padding: 0 0 0 1.15rem;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .warn-modal li { margin: 0.35rem 0; }
+    .warn-modal .row .primary {
+      background: #b8860b;
+      border-color: #d4a017;
+      color: #1a1408;
+    }
     .empty { color: var(--muted); font-size: 13px; padding: 0.5rem 0; }
     .job {
       display: grid;
@@ -498,6 +564,7 @@
       line-height: 1.45;
       margin: 0;
     }
+    .gpu-hint a { color: var(--accent); }
     .gpu-device {
       margin-top: 0.75rem;
       padding-top: 0.75rem;
@@ -567,9 +634,19 @@
 </head>
 <body>
   <header>
-    <h1>Photo Edit</h1>
+    <div class="header-left">
+      <h1>Photone</h1>
+      <nav class="site-nav">
+        <a href="/" class="active">Обработка фото</a>
+        <a href="/sort">Сортировка фото</a>
+        <a href="/generate">Создание фото</a>
+        <a href="/music">AI Sound</a>
+        <a href="/speech">AI Голос</a>
+      </nav>
+    </div>
     <span id="statusBadge" class="badge">загрузка…</span>
   </header>
+  <div id="sortLive" class="sort-live"></div>
 
   <main>
     <section id="draftsSection">
@@ -577,12 +654,13 @@
       <div class="toolbar">
         <button type="button" id="addDraftBtn">+ Черновик</button>
         <button type="button" id="prepareBtn" class="primary" disabled>Подготовить промпты</button>
+        <button type="button" id="skipPrepBtn" class="warn" disabled>Сразу в генерацию…</button>
       </div>
       <div id="draftsList"></div>
     </section>
 
     <section id="queueSection">
-      <h2>Очередь</h2>
+      <h2>Обработка фото</h2>
       <div class="toolbar">
         <button type="button" id="startGpuBtn" class="primary" disabled>Начать генерацию…</button>
       </div>
@@ -627,6 +705,22 @@
     </div>
   </div>
 
+  <div class="modal-bg warn-overlay" id="skipPrepModal">
+    <div class="modal warn-modal">
+      <h3>Без подготовки промпта</h3>
+      <p class="warn-lead">Черновики уйдут в модель с вашим текстом как есть. JoyCaption фото не проанализирует и промпт не перепишет.</p>
+      <ul>
+        <li>Русский текст Qwen понимает хуже английского — результат может быть слабее или «мимо».</li>
+        <li>Не будет экрана подтверждения английского промпта.</li>
+        <li>Фото-примеры передадутся, но без описания JoyCaption.</li>
+      </ul>
+      <div class="row">
+        <button type="button" id="skipPrepCancelBtn">Отмена</button>
+        <button type="button" id="skipPrepOkBtn" class="primary">Всё равно в генерацию</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-bg" id="confirmGpuModal">
     <div class="modal">
       <h3>Добавить в очередь генерации</h3>
@@ -650,7 +744,13 @@
         <select id="gpuStepsSelect"></select>
       </div>
       <p id="gpuStepsHint" class="gpu-hint"></p>
+      <div class="gpu-field">
+        <label for="gpuLoraSelect">LoRA (дообучение)</label>
+        <select id="gpuLoraSelect"></select>
+      </div>
+      <p id="gpuLoraHint" class="gpu-hint"></p>
       <p id="gpuDeviceInfo" class="gpu-device"></p>
+      <p class="gpu-hint">Qwen Image 2512 и Stable Diffusion XL 1.0 рисуют с нуля — откройте страницу <a href="/generate">Создание фото</a>. Здесь только правка фото.</p>
       <div class="row">
         <button type="button" id="gpuCancelBtn">Отмена</button>
         <button type="button" id="gpuOkBtn" class="primary">Запустить</button>
@@ -676,15 +776,16 @@
   <script>
     const GPU_MODEL_KEY = "photoEditGpuModel";
     const GPU_STEPS_KEY = "photoEditGpuSteps";
+    const GPU_LORA_KEY = "photoEditGpuLora";
     const STEP_HINTS = {
       10: "Быстрый черновик: видно общую идею и крупные изменения, но детали могут быть мягкими, с артефактами и неточностями. Хорошо для проверки композиции и направления правок.",
       15: "Ускоренный режим: заметно быстрее, качество среднее — подходит для промежуточных тестов.",
       20: "Баланс скорости и качества: для многих правок уже достаточно, если не нужен максимум детализации.",
       25: "Почти полное качество Qwen: медленнее, но заметно стабильнее детали и кожа.",
-      28: "Стандарт для FLUX: обычно хороший баланс качества и времени.",
-      37: "Максимум для Qwen: самое высокое качество, но самый долгий прогон.",
+      40: "Официальный максимум Qwen-Image-Edit: самое высокое качество, самый долгий прогон.",
     };
     let models = [];
+    let loras = [];
     let maxReferenceImages = 3;
     let queue = null;
     let approveJobId = null;
@@ -703,6 +804,10 @@
       statusBadge: document.getElementById("statusBadge"),
       addDraftBtn: document.getElementById("addDraftBtn"),
       prepareBtn: document.getElementById("prepareBtn"),
+      skipPrepBtn: document.getElementById("skipPrepBtn"),
+      skipPrepModal: document.getElementById("skipPrepModal"),
+      skipPrepOkBtn: document.getElementById("skipPrepOkBtn"),
+      skipPrepCancelBtn: document.getElementById("skipPrepCancelBtn"),
       startGpuBtn: document.getElementById("startGpuBtn"),
       draftsList: document.getElementById("draftsList"),
       pendingList: document.getElementById("pendingList"),
@@ -731,6 +836,8 @@
       gpuModelSelect: document.getElementById("gpuModelSelect"),
       gpuStepsSelect: document.getElementById("gpuStepsSelect"),
       gpuStepsHint: document.getElementById("gpuStepsHint"),
+      gpuLoraSelect: document.getElementById("gpuLoraSelect"),
+      gpuLoraHint: document.getElementById("gpuLoraHint"),
       gpuDeviceInfo: document.getElementById("gpuDeviceInfo"),
       gpuOkBtn: document.getElementById("gpuOkBtn"),
       gpuCancelBtn: document.getElementById("gpuCancelBtn"),
@@ -788,7 +895,28 @@
         .filter((m) => m.selectable)
         .map((m) => `<option value="${esc(m.id)}"${m.id === saved ? " selected" : ""}>${esc(gpuModelLabel(m))}</option>`)
         .join("");
+      if (!els.gpuModelSelect.value && els.gpuModelSelect.options.length) {
+        els.gpuModelSelect.selectedIndex = 0;
+      }
       fillGpuStepsSelect();
+      fillGpuLoraSelect();
+    }
+
+    function fillGpuLoraSelect() {
+      const saved = localStorage.getItem(GPU_LORA_KEY) || "";
+      const files = (loras || []).filter((l) => l && l.id);
+      const opts = [`<option value="">Без LoRA — базовая Qwen</option>`];
+      for (const lora of files) {
+        opts.push(
+          `<option value="${esc(lora.id)}"${lora.id === saved ? " selected" : ""}>${esc(lora.name)} (${lora.size_mb} МБ)</option>`
+        );
+      }
+      els.gpuLoraSelect.innerHTML = opts.join("");
+      if (els.gpuLoraHint) {
+        els.gpuLoraHint.textContent = files.length
+          ? "Одна LoRA на все Qwen 3.5 / 3.6 (веса 2509). Для 2511 нужна отдельная, обученная на 2511."
+          : "Файлов в папке loras/ нет. Сначала пары source/target → train-lora.bat → скопировать .safetensors в loras/.";
+      }
     }
 
     function currentGpuModel() {
@@ -797,7 +925,7 @@
 
     function fillGpuStepsSelect() {
       const model = currentGpuModel();
-      const presets = (model && model.step_presets) ? model.step_presets : [10, 15, 20, 28];
+      const presets = (model && model.step_presets) ? model.step_presets : [10, 15, 20, 25, 40];
       const saved = Number(localStorage.getItem(GPU_STEPS_KEY) || "");
       const defaultSteps = (model && model.default_steps) ? model.default_steps : presets[presets.length - 1];
       const selected = presets.includes(saved) ? saved : defaultSteps;
@@ -1282,7 +1410,7 @@
       if (!drafts.length) {
         if (!els.draftsList.querySelector("[data-draft]")) {
           els.draftsList.innerHTML =
-            '<p class="empty">Добавьте черновик: фото + промпт (опционально — фото-примеры), затем «Подготовить промпты».</p>';
+            '<p class="empty">Добавьте черновик: фото + промпт. Дальше — «Подготовить промпты» или «Сразу в генерацию».</p>';
         }
         return;
       }
@@ -1557,6 +1685,7 @@
       if (!queue) return;
       const q = queue;
       els.prepareBtn.disabled = !q.can_prepare;
+      if (els.skipPrepBtn) els.skipPrepBtn.disabled = !q.can_skip_prep;
       els.startGpuBtn.disabled = !q.can_start_generation;
       if (q.gpu_confirm_only) {
         els.startGpuBtn.textContent = q.approved_count > 0
@@ -1617,12 +1746,37 @@
         const st = await api("/api/status");
         const busy = st.gpu_busy || (st.active_job && !st.active_job.done);
         let label = busy ? "GPU занят" : "GPU свободен";
-        if (st.gpu && st.gpu.cuda) {
+        if (st.gpu && st.gpu.cuda && !st.sort_busy) {
           const suffix = st.gpu.preferred_mode === "cuda" ? "CUDA" : "offload";
           label += ` · ${st.gpu.vram_total_gb} ГБ · ${suffix}`;
         }
+        if (st.sort_busy) {
+          label = (st.sort_work_title || "Сортировка фото") + (st.sort_elapsed_sec != null ? ` · ${st.sort_elapsed_sec} с` : "");
+        }
+        if (st.t2i_busy) {
+          label = "Создание фото";
+        }
+        if (st.music_busy) {
+          label = "AI Sound";
+        }
         els.statusBadge.textContent = label;
-        els.statusBadge.className = "badge " + (busy ? "busy" : "ok");
+        els.statusBadge.className = "badge " + (busy || st.sort_busy || st.t2i_busy || st.music_busy ? "busy" : "ok");
+        const live = document.getElementById("sortLive");
+        if (live) {
+          if (st.sort_busy) {
+            live.classList.add("on");
+            live.innerHTML = `${st.sort_work_title || "Сортировка фото"}: ${st.sort_message || "идёт…"} — <a href="/sort">открыть</a>`;
+          } else if (st.t2i_busy) {
+            live.classList.add("on");
+            live.innerHTML = `Создание фото: ${st.t2i_message || "идёт…"} — <a href="/generate">открыть</a>`;
+          } else if (st.music_busy) {
+            live.classList.add("on");
+            live.innerHTML = `AI Sound: ${st.music_message || "идёт…"} — <a href="/music">открыть</a>`;
+          } else {
+            live.classList.remove("on");
+            live.textContent = "";
+          }
+        }
       } catch (_) {}
     }
 
@@ -1805,15 +1959,20 @@
       } catch (e) { toast(e.message, true); }
     };
 
-    els.prepareBtn.onclick = async () => {
-      try {
-        const r = await api("/api/queue/prepare", { method: "POST" });
-        toast(`Подготовка: ${r.prepared} задач`);
-        await refreshQueue();
-      } catch (e) { toast(e.message, true); }
-    };
+    async function flushDirtyDrafts() {
+      const forms = [...els.draftsList.querySelectorAll("[data-draft]")];
+      for (const form of forms) {
+        const id = form.dataset.draft;
+        if (!id || !Object.prototype.hasOwnProperty.call(dirtyPrompts, id)) continue;
+        await saveDraft(id, form, { quiet: true });
+      }
+    }
 
-    els.startGpuBtn.onclick = async () => {
+    async function openGpuPicker() {
+      if (queue && queue.paused_gpu_count) {
+        toast("Сначала снимите паузу текущей генерации");
+        return;
+      }
       if (queue && queue.gpu_confirm_only) {
         const n = queue.approved_count || 0;
         const model = queue.gpu_session_model || "";
@@ -1827,10 +1986,44 @@
         els.confirmGpuModal.classList.add("open");
         return;
       }
-      fillGpuSelect();
       const data = await api("/api/models");
+      models = data.models || models;
+      loras = data.loras || [];
       renderGpuDeviceInfo(data.gpu);
+      fillGpuSelect();
       els.gpuModal.classList.add("open");
+    }
+
+    els.prepareBtn.onclick = async () => {
+      try {
+        await flushDirtyDrafts();
+        const r = await api("/api/queue/prepare", { method: "POST" });
+        toast(`Подготовка: ${r.prepared} задач`);
+        await refreshQueue();
+      } catch (e) { toast(e.message, true); }
+    };
+
+    els.skipPrepBtn.onclick = () => els.skipPrepModal.classList.add("open");
+    els.skipPrepCancelBtn.onclick = () => els.skipPrepModal.classList.remove("open");
+    els.skipPrepModal.onclick = (ev) => {
+      if (ev.target === els.skipPrepModal) els.skipPrepModal.classList.remove("open");
+    };
+    els.skipPrepOkBtn.onclick = async () => {
+      try {
+        await flushDirtyDrafts();
+        const r = await api("/api/queue/skip-prep", { method: "POST" });
+        els.skipPrepModal.classList.remove("open");
+        queue = r.queue || queue;
+        toast(`Без подготовки: ${r.skipped} · выберите модель`);
+        await refreshQueue();
+        await openGpuPicker();
+      } catch (e) { toast(e.message, true); }
+    };
+
+    els.startGpuBtn.onclick = async () => {
+      try {
+        await openGpuPicker();
+      } catch (e) { toast(e.message, true); }
     };
 
     els.gpuModelSelect.addEventListener("change", fillGpuStepsSelect);
@@ -1871,12 +2064,15 @@
     els.gpuOkBtn.onclick = async () => {
       const model = els.gpuModelSelect.value;
       const steps = els.gpuStepsSelect.value;
+      const lora = els.gpuLoraSelect.value || "";
       localStorage.setItem(GPU_MODEL_KEY, model);
       localStorage.setItem(GPU_STEPS_KEY, steps);
+      localStorage.setItem(GPU_LORA_KEY, lora);
       try {
         const fd = new FormData();
         fd.append("model", model);
         fd.append("steps", steps);
+        if (lora) fd.append("lora", lora);
         const r = await api("/api/queue/start-gpu", { method: "POST", body: fd });
         els.gpuModal.classList.remove("open");
         toast(`Запущено: ${r.started} · ${modelName(model)} · ${r.inference_steps} шагов`);
@@ -1887,6 +2083,7 @@
     async function init() {
       const data = await api("/api/models");
       models = data.models || [];
+      loras = data.loras || [];
       if (data.max_reference_images) maxReferenceImages = data.max_reference_images;
       renderGpuDeviceInfo(data.gpu);
       fillGpuSelect();
@@ -1896,5 +2093,6 @@
 
     init().catch((e) => toast(e.message, true));
   </script>
+  <script src="/static/sw-register.js"></script>
 </body>
 </html>

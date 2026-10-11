@@ -52,6 +52,7 @@ class Job:
     message: str = "В очереди..."
     model_id: str = ""
     inference_steps: int = 0
+    lora_id: str = ""
     prompt: str = ""
     output_max_side: int = 0
     image_name: str = ""
@@ -89,6 +90,7 @@ class Job:
             "message": self.message,
             "model_id": self.model_id,
             "inference_steps": self.inference_steps,
+            "lora_id": self.lora_id,
             "joycaption_flow": uses_joycaption_flow(self.model_id),
             "prompt": self.prompt,
             "output_max_side": self.output_max_side,
@@ -163,6 +165,7 @@ class JobStore:
         self._gpu_process: subprocess.Popen | None = None
         self._gpu_session_model: str | None = None
         self._gpu_session_steps: int = 0
+        self._gpu_session_lora: str = ""
 
     def gpu_session_model(self) -> str | None:
         with self._lock:
@@ -216,6 +219,7 @@ class JobStore:
         if not has_gpu_work or self.has_paused_gpu_jobs_unlocked():
             self._gpu_session_model = None
             self._gpu_session_steps = 0
+            self._gpu_session_lora = ""
 
     def set_gpu_process(self, proc) -> None:
         with self._lock:
@@ -498,6 +502,48 @@ class JobStore:
             self._update_queue_positions_unlocked()
             return len(to_prepare), "", [j.id for j in to_prepare]
 
+    def skip_prep_drafts(self) -> tuple[int, str, list[str]]:
+        """Mark ready drafts approved using the user's prompt as-is (no JoyCaption)."""
+        from image_editor import augment_prompt_for_qwen_reference
+        from prompt_helper import format_for_qwen, prompt_is_english
+
+        with self._lock:
+            to_skip: list[Job] = []
+            for job_id in self._pending_ids:
+                job = self._jobs.get(job_id)
+                if (
+                    job
+                    and job.status == DRAFT_STATUS
+                    and job.image_bytes
+                    and job.prompt.strip()
+                ):
+                    to_skip.append(job)
+            if not to_skip:
+                return 0, "Нет готовых черновиков (нужны фото и промпт)", []
+            for job in to_skip:
+                if job.image_bytes:
+                    try:
+                        from output_resolution import image_pixel_size
+
+                        w, h = image_pixel_size(job.image_bytes)
+                        job.output_max_side = max(w, h)
+                    except Exception:
+                        pass
+                prompt_used = format_for_qwen(job.prompt)
+                n_refs = len(job.reference_images)
+                if n_refs:
+                    prompt_used = augment_prompt_for_qwen_reference(prompt_used, n_refs)
+                job.prompt_used = prompt_used
+                job.prompt_translation = job.prompt.strip()
+                job.note = None if prompt_is_english(job.prompt) else (
+                    "Промпт отправлен без JoyCaption — русский текст ушёл в модель как есть"
+                )
+                job.status = "approved"
+                job.message = "Без подготовки — в очередь на генерацию"
+                job.updated_at = time.time()
+            self._update_queue_positions_unlocked()
+            return len(to_skip), "", [j.id for j in to_skip]
+
     def attach_payload(
         self,
         job_id: str,
@@ -731,6 +777,7 @@ class JobStore:
                 "gpu_session_steps": self._gpu_session_steps,
                 "gpu_confirm_only": self._gpu_session_model is not None,
                 "can_prepare": draft_ready > 0,
+                "can_skip_prep": draft_ready > 0,
                 "can_start_generation": approved_count > 0 and paused_gpu_count == 0,
                 "prep_in_progress": self.prep_still_running_unlocked(),
                 "pending_count": len(pending),
@@ -1020,6 +1067,7 @@ class JobStore:
             self._release_slots_unlocked(job_id)
             self._gpu_session_model = None
             self._gpu_session_steps = 0
+            self._gpu_session_lora = ""
             self._update_queue_positions_unlocked()
             self._sync_gpu_session_unlocked()
         try:
@@ -1048,6 +1096,8 @@ class JobStore:
                 self._gpu_session_model = job.model_id
             if job.inference_steps:
                 self._gpu_session_steps = job.inference_steps
+            if job.lora_id:
+                self._gpu_session_lora = job.lora_id
             job.updated_at = time.time()
             self._update_queue_positions_unlocked()
         return True, ""
@@ -1266,7 +1316,7 @@ class JobStore:
         return True, ""
 
     def promote_approved_to_gpu(
-        self, model_id: str, inference_steps: int = 0
+        self, model_id: str, inference_steps: int = 0, lora_id: str = ""
     ) -> tuple[int, list[str]]:
         from image_editor import inference_steps_for_model
 
@@ -1276,15 +1326,18 @@ class JobStore:
                 self._gpu_session_steps = inference_steps_for_model(
                     model_id, inference_steps or None
                 )
+                self._gpu_session_lora = lora_id or ""
             elif self._gpu_session_model != model_id:
                 model_id = self._gpu_session_model
             steps = self._gpu_session_steps
+            session_lora = getattr(self, "_gpu_session_lora", "") or lora_id
             promoted: list[str] = []
             for job_id in self._pending_ids:
                 job = self._jobs.get(job_id)
                 if job and job.status == "approved":
                     job.model_id = model_id
                     job.inference_steps = steps
+                    job.lora_id = session_lora
                     job.status = "queued_gpu"
                     job.message = f"В очереди на GPU — {steps} шагов"
                     job.updated_at = time.time()

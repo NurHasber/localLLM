@@ -42,6 +42,8 @@ _MAX_SIDE_JOYCAPTION_ANALYSIS = 768
 # Qwen image-edit works best at moderate resolutions; large inputs cause
 # the model to "see" only a crop of the image, cutting off people/objects.
 _MAX_SIDE_QWEN_GENERATION = 1024
+ROOT = Path(__file__).resolve().parent
+LORA_DIR = ROOT / "loras"
 
 
 def _snapshot_dir(repo_id: str) -> Path | None:
@@ -273,14 +275,14 @@ def get_gpu_info() -> dict:
 
 def resolve_gpu_chain_model(model_id: str) -> str:
     if uses_joycaption_flow(model_id) and not is_test_model(model_id):
-        return MODELS["joycaption"].chain_to or "flux-kontext"
+        return MODELS["joycaption"].chain_to or "qwen36-hauhau"
     return model_id
 
 
 def inference_steps_for_model(model_id: str, steps: int | None = None) -> int:
     chain_id = resolve_gpu_chain_model(model_id)
-    allowed = MODEL_STEP_PRESETS.get(chain_id) or MODEL_STEP_PRESETS.get(model_id, [28])
-    default = MODEL_DEFAULT_STEPS.get(chain_id, MODEL_DEFAULT_STEPS.get(model_id, 28))
+    allowed = MODEL_STEP_PRESETS.get(chain_id) or MODEL_STEP_PRESETS.get(model_id, [40])
+    default = MODEL_DEFAULT_STEPS.get(chain_id, MODEL_DEFAULT_STEPS.get(model_id, 40))
     if steps is None or steps <= 0:
         return default
     if steps not in allowed:
@@ -296,10 +298,6 @@ def _preferred_gpu_mode() -> str:
     if _import_torch().cuda.is_available():
         return "offload"
     return "cpu"
-
-
-# Backward alias
-_flux_load_device = _preferred_gpu_mode
 
 
 def _place_diffusion_pipe(
@@ -379,7 +377,7 @@ def _place_diffusion_pipe(
 def _invalidate_gpu_models_if_mode_changed() -> None:
     want = _preferred_gpu_mode()
     for state in MODELS.values():
-        if state.kind not in ("flux", "qwen_edit", "qwen_t2i") or not _model_ready(state):
+        if state.kind != "qwen_edit" or not _model_ready(state):
             continue
         if state.device_mode == want:
             continue
@@ -623,19 +621,15 @@ def _resume_sigmas(pipe, meta: dict, completed: int, remaining_ts: list, *, qwen
     return [float(t) / num_train for t in remaining_ts]
 
 
-def _flux_mu(pipe, image_seq_len: int) -> float:
-    from diffusers.pipelines.flux.pipeline_flux_kontext import calculate_shift
-
+def _scheduler_mu(pipe, image_seq_len: int) -> float:
     sched = pipe.scheduler
-    return float(
-        calculate_shift(
-            image_seq_len,
-            sched.config.get("base_image_seq_len", 256),
-            sched.config.get("max_image_seq_len", 4096),
-            sched.config.get("base_shift", 0.5),
-            sched.config.get("max_shift", 1.15),
-        )
-    )
+    base_seq = float(sched.config.get("base_image_seq_len", 256))
+    max_seq = float(sched.config.get("max_image_seq_len", 4096))
+    base_shift = float(sched.config.get("base_shift", 0.5))
+    max_shift = float(sched.config.get("max_shift", 1.15))
+    m = (max_shift - base_shift) / (max_seq - base_seq)
+    b = base_shift - m * base_seq
+    return float(image_seq_len * m + b)
 
 
 def _step_callback(
@@ -647,7 +641,6 @@ def _step_callback(
     *,
     pause_checker: PauseFn | None = None,
     checkpoint_meta: dict | None = None,
-    flux_kontext: bool = False,
     qwen_edit: bool = False,
     step_base: int = 0,
 ):
@@ -678,9 +671,9 @@ def _step_callback(
                             "checkpoint_timesteps_capture_failed",
                             error=str(exc),
                         )
-            if (flux_kontext or qwen_edit) and "mu" not in checkpoint_meta:
+            if qwen_edit and "mu" not in checkpoint_meta:
                 try:
-                    checkpoint_meta["mu"] = _flux_mu(_pipe, int(latents.shape[1]))
+                    checkpoint_meta["mu"] = _scheduler_mu(_pipe, int(latents.shape[1]))
                 except Exception as exc:  # noqa: BLE001
                     if job_id:
                         from job_logger import log_generation_info
@@ -743,8 +736,8 @@ def _run_pipe(
     preview_image: Image.Image | None = None,
     job_id: str | None = None,
     model_id: str = "unknown",
-    flux_kontext: bool = False,
     resume_job_id: str | None = None,
+    lora_path: str | None = None,
     **kwargs,
 ):
     from step_timing import DiffusionStepTracker
@@ -777,7 +770,7 @@ def _run_pipe(
                 remaining_sigmas = _resume_sigmas(
                     pipe, meta, completed, remaining_ts, qwen_edit=qwen_edit
                 )
-                if flux_kontext or qwen_edit:
+                if qwen_edit:
                     kwargs["sigmas"] = remaining_sigmas
                 resumed = True
                 step_base = completed
@@ -787,7 +780,6 @@ def _run_pipe(
                 checkpoint_meta["job_id"] = job_id or resume_job_id
                 checkpoint_meta["model_id"] = model_id
                 checkpoint_meta["total_steps"] = total_steps
-                checkpoint_meta["flux_kontext"] = flux_kontext
                 checkpoint_meta["qwen_edit"] = qwen_edit
                 if remaining_sigmas and not checkpoint_meta.get("sigmas"):
                     checkpoint_meta["sigmas"] = [0.0] * completed + remaining_sigmas
@@ -805,7 +797,6 @@ def _run_pipe(
                         completed_step=completed,
                         total_steps=total_steps,
                         remaining_steps=len(remaining_ts),
-                        flux_kontext=flux_kontext,
                         qwen_edit=qwen_edit,
                         has_mu=bool(meta.get("mu")),
                         has_sigmas=bool(remaining_sigmas),
@@ -834,12 +825,6 @@ def _run_pipe(
         gen_h, gen_w = _pipeline_pixel_dims(pipe, preview_image)
         kwargs.setdefault("height", gen_h)
         kwargs.setdefault("width", gen_w)
-        if flux_kontext:
-            kwargs.setdefault("max_area", gen_w * gen_h)
-            kwargs.setdefault("_auto_resize", False)
-            img = kwargs.get("image")
-            if img is not None and img.size != (gen_w, gen_h):
-                kwargs["image"] = img.resize((gen_w, gen_h), Image.Resampling.LANCZOS)
         from output_resolution import format_dimensions_label
 
         dim_label = format_dimensions_label(gen_w, gen_h)
@@ -849,7 +834,6 @@ def _run_pipe(
             "job_id": job_id,
             "model_id": model_id,
             "total_steps": total_steps,
-            "flux_kontext": flux_kontext,
             "height": gen_h,
             "width": gen_w,
             "prompt": kwargs.get("prompt"),
@@ -869,7 +853,6 @@ def _run_pipe(
         job_id=job_id,
         pause_checker=pause_checker,
         checkpoint_meta=checkpoint_meta,
-        flux_kontext=flux_kontext,
         qwen_edit=qwen_edit,
         step_base=step_base,
     )
@@ -930,6 +913,7 @@ def _run_pipe(
         from job_logger import log_job
 
         log_job(job_id, f"pipe() start model={model_id} {dim_label or 'no-dims'} steps={total_steps} resumed={resumed}")
+    _apply_lora(pipe, lora_path, job_id=job_id)
     try:
         with torch.inference_mode():
             result = pipe(**kwargs)
@@ -947,10 +931,11 @@ def _run_pipe(
                 resumed=resumed,
                 step=timing.working_step(),
                 total_steps=total_steps,
-                flux_kontext=flux_kontext,
+                qwen_edit=qwen_edit,
                 dim_label=dim_label,
                 has_latents=bool(kwargs.get("latents") is not None),
                 has_sigmas=bool(kwargs.get("sigmas") is not None),
+                lora=str(Path(lora_path).name) if lora_path else "",
             )
         raise
     finally:
@@ -973,9 +958,10 @@ class ModelState:
     size_gb: str
     gated: bool
     repo_id: str
-    kind: str = "flux"
+    kind: str = "qwen_edit"
     chain_to: str | None = None
     usage_hint: str = ""
+    expected: str = ""
     pipe: Any = None
     processor: Any = None
     device_mode: str = ""
@@ -991,6 +977,9 @@ QWEN_EDIT_2509_IDS = frozenset({"qwen35-hauhau", "qwen36-hauhau"})
 QWEN_EDIT_2511_IDS = frozenset({"qwen-edit-2511"})
 QWEN_EDIT_IDS = QWEN_EDIT_2509_IDS | QWEN_EDIT_2511_IDS
 QWEN_T2I_IDS = frozenset({"qwen-image-2512"})
+SDXL_T2I_IDS = frozenset({"sdxl-base-1.0"})
+T2I_KINDS = frozenset({"qwen_t2i", "sdxl_t2i"})
+SDXL_T2I_REPO = "stabilityai/stable-diffusion-xl-base-1.0"
 
 _REFERENCE_JOYCAPTION_INSTRUCTION = (
     "Describe the visible physical features in this reference photo: "
@@ -999,19 +988,6 @@ _REFERENCE_JOYCAPTION_INSTRUCTION = (
 )
 
 MODELS: dict[str, ModelState] = {
-    "flux-kontext": ModelState(
-        model_id="flux-kontext",
-        name="FLUX.1 Kontext",
-        description="Редактирование людей, одежды и сцены по текстовому промпту.",
-        size_gb="~12",
-        gated=True,
-        repo_id="black-forest-labs/FLUX.1-Kontext-dev",
-        kind="flux",
-        usage_hint=(
-            "Нужны HuggingFace login и принятая лицензия модели. "
-            "Первый запуск загружает веса в GPU (~2–5 мин)."
-        ),
-    ),
     "qwen35-hauhau": ModelState(
         model_id="qwen35-hauhau",
         name="Qwen3.5 HauhauCS Aggressive",
@@ -1054,28 +1030,51 @@ MODELS: dict[str, ModelState] = {
     "qwen-image-2512": ModelState(
         model_id="qwen-image-2512",
         name="Qwen Image 2512",
-        description="Текст → картинка без исходного фото. Apache 2.0. Перевод — HauhauCS Qwen3.6.",
+        description="Генерация с нуля по тексту (не правка фото). Отдельные веса от Edit — в 24 ГБ вместе не держатся.",
         size_gb="~20",
         gated=False,
         repo_id=QWEN_IMAGE_T2I_REPO,
         kind="qwen_t2i",
         usage_hint=(
-            "Черновик только с промптом, без основного фото. "
-            "Не смешивайте в одной генерации с задачами на правку фото."
+            "Text-to-image. Первый запуск скачает Qwen-Image-2512. "
+            "Не используйте одновременно с очередью правки фото."
+        ),
+        expected=(
+            "Сильное следование промпту, детальные сцены, лица и мелкий текст на картинке. "
+            "Ближе к фотореализму и «дорогому» свету, чем SDXL. Тяжёлая (~20 ГБ), 40–50 шагов, "
+            "первый запуск долго качает веса. Не правит загруженное фото — только рисует с нуля."
+        ),
+    ),
+    "sdxl-base-1.0": ModelState(
+        model_id="sdxl-base-1.0",
+        name="Stable Diffusion XL 1.0",
+        description="Классическая генерация 1024px с нуля. Легче Qwen-Image-2512, эстетика SDXL 2023.",
+        size_gb="~7",
+        gated=False,
+        repo_id=SDXL_T2I_REPO,
+        kind="sdxl_t2i",
+        usage_hint=(
+            "Text-to-image. Первый запуск скачает stabilityai/stable-diffusion-xl-base-1.0. "
+            "В 24 ГБ не держите вместе с Qwen Edit / Qwen-Image-2512."
+        ),
+        expected=(
+            "Быстрее и легче (~7 ГБ VRAM). Хорошо: концепт-арт, иллюстрация, портреты в «SD-стиле». "
+            "Слабее Qwen-2512 в сложных сценах, пальцах, мелком тексте и точном следовании длинному промпту. "
+            "20–30 шагов обычно достаточно. Без LoRA часто узнаваемый AI-look."
         ),
     ),
     "joycaption": ModelState(
         model_id="joycaption",
-        name="JoyCaption → FLUX",
-        description="JoyCaption анализирует фото и строит промпт, затем FLUX Kontext редактирует изображение.",
+        name="JoyCaption → Qwen",
+        description="JoyCaption анализирует фото и строит промпт, затем Qwen-Image-Edit правит изображение.",
         size_gb="~20",
         gated=False,
         repo_id="fancyfeast/llama-joycaption-beta-one-hf-llava",
         kind="joycaption",
-        chain_to="flux-kontext",
+        chain_to="qwen36-hauhau",
         usage_hint=(
-            "Сначала JoyCaption + подтверждение промпта, затем FLUX. "
-            "Нужны JoyCaption (~8 GB) и FLUX Kontext."
+            "Сначала JoyCaption + подтверждение промпта, затем Qwen Edit 2509. "
+            "Нужны JoyCaption (~8 GB) и Qwen-Image-Edit-2509."
         ),
     ),
     "test": ModelState(
@@ -1093,28 +1092,36 @@ MODELS: dict[str, ModelState] = {
     ),
 }
 
-DEFAULT_MODEL = "flux-kontext"
+DEFAULT_MODEL = "qwen36-hauhau"
 TEST_MODEL_ID = "test"
 JOYCAPTION_FLOW_IDS = frozenset({"joycaption", TEST_MODEL_ID})
 
-# Fixed inference params (prompt drives the edit; no user-facing strength slider).
-FLUX_GUIDANCE_SCALE = 3.5
 QWEN_TRUE_CFG_SCALE = 4.35
-QWEN_INFERENCE_STEPS = 37
-FLUX_INFERENCE_STEPS = 28
+QWEN_INFERENCE_STEPS = 40
 
+QWEN_T2I_STEPS = 50
+QWEN_T2I_CFG = 4.0
+QWEN_T2I_STEP_PRESETS = [20, 30, 40, 50]
+SDXL_T2I_STEPS = 25
+SDXL_T2I_CFG = 7.0
+SDXL_T2I_STEP_PRESETS = [15, 20, 25, 30]
+QWEN_STEP_PRESETS = [10, 15, 20, 25, 40]
 MODEL_STEP_PRESETS: dict[str, list[int]] = {
-    "flux-kontext": [10, 15, 20, 28],
-    "qwen35-hauhau": [10, 15, 20, 25, 37],
-    "qwen36-hauhau": [10, 15, 20, 25, 37],
-    "joycaption": [10, 15, 20, 28],
+    "qwen35-hauhau": QWEN_STEP_PRESETS,
+    "qwen36-hauhau": QWEN_STEP_PRESETS,
+    "qwen-edit-2511": QWEN_STEP_PRESETS,
+    "qwen-image-2512": QWEN_T2I_STEP_PRESETS,
+    "sdxl-base-1.0": SDXL_T2I_STEP_PRESETS,
+    "joycaption": QWEN_STEP_PRESETS,
     "test": [10],
 }
 MODEL_DEFAULT_STEPS: dict[str, int] = {
-    "flux-kontext": FLUX_INFERENCE_STEPS,
     "qwen35-hauhau": QWEN_INFERENCE_STEPS,
     "qwen36-hauhau": QWEN_INFERENCE_STEPS,
-    "joycaption": FLUX_INFERENCE_STEPS,
+    "qwen-edit-2511": QWEN_INFERENCE_STEPS,
+    "qwen-image-2512": QWEN_T2I_STEPS,
+    "sdxl-base-1.0": SDXL_T2I_STEPS,
+    "joycaption": QWEN_INFERENCE_STEPS,
     "test": 10,
 }
 
@@ -1129,21 +1136,65 @@ def is_test_model(model_id: str) -> bool:
     state = MODELS.get(model_id)
     return state is not None and state.kind == "test"
 
+
+def list_loras() -> list[dict[str, Any]]:
+    LORA_DIR.mkdir(parents=True, exist_ok=True)
+    items = []
+    for path in sorted(LORA_DIR.glob("*.safetensors")):
+        items.append(
+            {
+                "id": path.name,
+                "name": path.stem,
+                "size_mb": round(path.stat().st_size / (1024 * 1024), 1),
+            }
+        )
+    return items
+
+
+def resolve_lora_path(lora_id: str | None) -> str | None:
+    if not lora_id or lora_id.strip().lower() in ("", "none", "-"):
+        return None
+    path = LORA_DIR / Path(lora_id).name
+    if not path.is_file():
+        raise ValueError(f"LoRA не найдена в loras/: {path.name}")
+    return str(path)
+
+
+def _apply_lora(pipe, lora_path: str | None, *, job_id: str | None = None) -> None:
+    if hasattr(pipe, "unload_lora_weights"):
+        try:
+            pipe.unload_lora_weights()
+        except Exception:
+            pass
+    if not lora_path:
+        return
+    pipe.load_lora_weights(lora_path)
+    if job_id:
+        from job_logger import log_job
+
+        log_job(job_id, f"LoRA: {Path(lora_path).name}")
+
+
 _active_model: str | None = None
 
 
-def _qwen_pipeline_owner() -> str | None:
+def _qwen_pipeline_owner(repo_id: str | None = None) -> str | None:
     for mid in QWEN_EDIT_IDS:
-        if MODELS[mid].pipe is not None:
+        state = MODELS[mid]
+        if state.pipe is None:
+            continue
+        if repo_id is None or state.repo_id == repo_id:
             return mid
     return None
 
 
 def _share_qwen_pipeline(target_id: str) -> bool:
-    owner = _qwen_pipeline_owner()
-    if owner is None:
-        return False
+    target = MODELS[target_id]
+    owner = _qwen_pipeline_owner(target.repo_id)
+    if owner is None or owner == target_id:
+        return target.pipe is not None
     MODELS[target_id].pipe = MODELS[owner].pipe
+    MODELS[target_id].device_mode = MODELS[owner].device_mode
     return True
 
 
@@ -1153,7 +1204,7 @@ def _model_ready(state: ModelState) -> bool:
     if state.kind == "joycaption":
         return state.pipe is not None and state.processor is not None
     if state.kind == "qwen_edit":
-        return state.pipe is not None or _qwen_pipeline_owner() is not None
+        return state.pipe is not None or _qwen_pipeline_owner(state.repo_id) is not None
     return state.pipe is not None
 
 
@@ -1164,6 +1215,8 @@ def list_models() -> list[dict]:
     repo_cached: dict[str, bool] = {}
     out = []
     for m in MODELS.values():
+        if m.kind in T2I_KINDS:
+            continue
         rid = m.repo_id
         if m.kind == "test":
             cached = True
@@ -1188,16 +1241,43 @@ def list_models() -> list[dict]:
                 "joycaption_flow": uses_joycaption_flow(m.model_id),
                 "step_presets": MODEL_STEP_PRESETS.get(
                     resolve_gpu_chain_model(m.model_id),
-                    MODEL_STEP_PRESETS.get(m.model_id, [28]),
+                    MODEL_STEP_PRESETS.get(m.model_id, [40]),
                 ),
                 "default_steps": MODEL_DEFAULT_STEPS.get(
                     resolve_gpu_chain_model(m.model_id),
-                    MODEL_DEFAULT_STEPS.get(m.model_id, 28),
+                    MODEL_DEFAULT_STEPS.get(m.model_id, 40),
                 ),
             }
         if m.model_id in QWEN_EDIT_IDS:
             entry["ollama_translator"] = resolve_ollama_translator(m.model_id)
         out.append(entry)
+    return out
+
+
+def list_t2i_models() -> list[dict]:
+    from prompt_helper import resolve_ollama_translator
+
+    out = []
+    for m in MODELS.values():
+        if m.kind not in T2I_KINDS:
+            continue
+        cached = _repo_is_complete(m.repo_id) if m.repo_id else False
+        out.append(
+            {
+                "id": m.model_id,
+                "name": m.name,
+                "kind": m.kind,
+                "description": m.description,
+                "usage_hint": m.usage_hint,
+                "expected": m.expected,
+                "size_gb": m.size_gb,
+                "cached": cached,
+                "ready": _model_ready(m),
+                "step_presets": MODEL_STEP_PRESETS.get(m.model_id, QWEN_T2I_STEP_PRESETS),
+                "default_steps": MODEL_DEFAULT_STEPS.get(m.model_id, QWEN_T2I_STEPS),
+                "ollama_translator": resolve_ollama_translator(m.model_id),
+            }
+        )
     return out
 
 
@@ -1207,32 +1287,11 @@ def _unload_other_models(keep_id: str) -> None:
     for mid, state in MODELS.items():
         if mid == keep_id:
             continue
-        if keep.kind == "qwen_edit" and state.kind == "qwen_edit":
+        if keep.kind == "qwen_edit" and state.kind == "qwen_edit" and state.repo_id == keep.repo_id:
             continue
         state.pipe = None
         state.processor = None
     _free_gpu_memory()
-
-
-def _load_flux_kontext(
-    state: ModelState,
-    pipeline: PipelineProgress | None = None,
-    cancel_checker: CancelFn | None = None,
-) -> None:
-    torch = _import_torch()
-    from diffusers import FluxKontextPipeline
-
-    dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-    pipe = _load_pipeline(
-        FluxKontextPipeline, state.repo_id, pipeline, cancel_checker, torch_dtype=dtype
-    )
-    mode = _place_diffusion_pipe(
-        pipe, pipeline=pipeline, label="FLUX Kontext", cancel_checker=cancel_checker
-    )
-    if hasattr(pipe, "vae") and pipe.vae is not None:
-        pipe.vae.enable_tiling()
-    state.pipe = pipe
-    state.device_mode = mode
 
 
 def _load_qwen_edit(
@@ -1258,7 +1317,7 @@ def _load_qwen_edit(
         low_cpu_mem_usage=True,
     )
     mode = _place_diffusion_pipe(
-        pipe, pipeline=pipeline, label="Qwen-Image-Edit-2509", cancel_checker=cancel_checker
+        pipe, pipeline=pipeline, label=state.repo_id.split("/")[-1], cancel_checker=cancel_checker
     )
     # Tiling on Qwen VAE often produces flat/block color canvases; 24 GB does not need it.
     if hasattr(pipe, "vae") and pipe.vae is not None and hasattr(pipe.vae, "disable_tiling"):
@@ -1266,8 +1325,73 @@ def _load_qwen_edit(
     state.pipe = pipe
     state.device_mode = mode
     for mid in QWEN_EDIT_IDS:
-        MODELS[mid].pipe = pipe
-        MODELS[mid].device_mode = mode
+        other = MODELS[mid]
+        if other.repo_id == state.repo_id:
+            other.pipe = pipe
+            other.device_mode = mode
+
+
+def _qwen_t2i_pipe_cls():
+    try:
+        from diffusers import QwenImagePipeline
+
+        return QwenImagePipeline
+    except ImportError:
+        from diffusers import DiffusionPipeline
+
+        return DiffusionPipeline
+
+
+def _load_qwen_t2i(
+    state: ModelState,
+    pipeline: PipelineProgress | None = None,
+    cancel_checker: CancelFn | None = None,
+) -> None:
+    torch = _import_torch()
+    dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+    pipe = _load_pipeline(
+        _qwen_t2i_pipe_cls(),
+        state.repo_id,
+        pipeline,
+        cancel_checker,
+        torch_dtype=dtype,
+        low_cpu_mem_usage=True,
+    )
+    mode = _place_diffusion_pipe(
+        pipe, pipeline=pipeline, label=state.repo_id.split("/")[-1], cancel_checker=cancel_checker
+    )
+    if hasattr(pipe, "vae") and pipe.vae is not None and hasattr(pipe.vae, "disable_tiling"):
+        pipe.vae.disable_tiling()
+    state.pipe = pipe
+    state.device_mode = mode
+
+
+def _load_sdxl_t2i(
+    state: ModelState,
+    pipeline: PipelineProgress | None = None,
+    cancel_checker: CancelFn | None = None,
+) -> None:
+    torch = _import_torch()
+    from diffusers import StableDiffusionXLPipeline
+
+    dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+    extra: dict = {"torch_dtype": dtype, "low_cpu_mem_usage": True, "use_safetensors": True}
+    if torch.cuda.is_available():
+        extra["variant"] = "fp16"
+    pipe = _load_pipeline(
+        StableDiffusionXLPipeline,
+        state.repo_id,
+        pipeline,
+        cancel_checker,
+        **extra,
+    )
+    mode = _place_diffusion_pipe(
+        pipe, pipeline=pipeline, label=state.repo_id.split("/")[-1], cancel_checker=cancel_checker
+    )
+    if hasattr(pipe, "enable_vae_slicing"):
+        pipe.enable_vae_slicing()
+    state.pipe = pipe
+    state.device_mode = mode
 
 
 def _load_joycaption(
@@ -1329,12 +1453,14 @@ def _load_joycaption(
     state.pipe = model
 
 
-def _joycaption_prompt(
+def _joycaption_generate(
     state: ModelState,
     image: Image.Image,
-    user_prompt: str,
+    user_content: str,
     pipeline: PipelineProgress | None = None,
     cancel_checker: CancelFn | None = None,
+    *,
+    max_new_tokens: int = 128,
 ) -> str:
     torch = _import_torch()
     from transformers import StoppingCriteria, StoppingCriteriaList
@@ -1351,14 +1477,9 @@ def _joycaption_prompt(
             Image.Resampling.LANCZOS,
         )
 
-    instruction = (
-        f"The user wants to edit this photo. User instruction: {user_prompt}. "
-        "Write one detailed English instruction for an AI image editor. "
-        "Describe only the desired visual change. Be explicit. One paragraph, no quotes."
-    )
     convo = [
         {"role": "system", "content": "You are JoyCaption, an expert image captioning assistant."},
-        {"role": "user", "content": instruction},
+        {"role": "user", "content": user_content},
     ]
     convo_string = processor.apply_chat_template(convo, tokenize=False, add_generation_prompt=True)
     inputs = processor(text=[convo_string], images=[image], return_tensors="pt")
@@ -1403,7 +1524,7 @@ def _joycaption_prompt(
         with torch.inference_mode():
             output_ids = model.generate(
                 **inputs,
-                max_new_tokens=128,
+                max_new_tokens=max_new_tokens,
                 do_sample=True,
                 temperature=0.6,
                 top_p=0.9,
@@ -1418,10 +1539,88 @@ def _joycaption_prompt(
     return processor.tokenizer.decode(trimmed, skip_special_tokens=True).strip()
 
 
+def _joycaption_prompt(
+    state: ModelState,
+    image: Image.Image,
+    user_prompt: str,
+    pipeline: PipelineProgress | None = None,
+    cancel_checker: CancelFn | None = None,
+) -> str:
+    instruction = (
+        f"The user wants to edit this photo. User instruction: {user_prompt}. "
+        "Write one detailed English instruction for an AI image editor. "
+        "Describe only the desired visual change. Be explicit. One paragraph, no quotes."
+    )
+    return _joycaption_generate(
+        state,
+        image,
+        instruction,
+        pipeline=pipeline,
+        cancel_checker=cancel_checker,
+        max_new_tokens=128,
+    )
+
+
+SORT_CAPTION_INSTRUCTION = (
+    "Look at this image. Write a short English caption of what is actually shown. "
+    "Do not use a preset category list. Do not force labels like person, animal, anime, furry, or landscape. "
+    "One phrase, max 20 words. No quotes."
+)
+
+
+def ensure_joycaption_loaded(
+    pipeline: PipelineProgress | None = None,
+    cancel_checker: CancelFn | None = None,
+) -> None:
+    """Load JoyCaption and keep it in VRAM for a batch of captions."""
+    _free_gpu_memory()
+    ensure_model_loaded(
+        "joycaption",
+        pipeline=pipeline,
+        cancel_checker=cancel_checker,
+        progress_phase="translate",
+    )
+    state = MODELS["joycaption"]
+    if not _model_ready(state):
+        raise RuntimeError(state.error or "JoyCaption не загружен")
+
+
+def unload_joycaption() -> None:
+    state = MODELS["joycaption"]
+    state.pipe = None
+    state.processor = None
+    try:
+        _free_gpu_memory()
+    except Exception:
+        pass
+
+
+def caption_image_for_sort(
+    image_bytes: bytes,
+    pipeline: PipelineProgress | None = None,
+    cancel_checker: CancelFn | None = None,
+) -> str:
+    """Short sorting caption. Caller must have called ensure_joycaption_loaded()."""
+    image = _prepare_image_for_analysis(image_bytes)
+    state = MODELS["joycaption"]
+    if not _model_ready(state):
+        raise RuntimeError(state.error or "JoyCaption не загружен")
+    return _joycaption_generate(
+        state,
+        image,
+        SORT_CAPTION_INSTRUCTION,
+        pipeline=pipeline,
+        cancel_checker=cancel_checker,
+        max_new_tokens=48,
+    ).strip()
+
+
 _LOADERS = {
-    "flux-kontext": _load_flux_kontext,
     "qwen35-hauhau": _load_qwen_edit,
     "qwen36-hauhau": _load_qwen_edit,
+    "qwen-edit-2511": _load_qwen_edit,
+    "qwen-image-2512": _load_qwen_t2i,
+    "sdxl-base-1.0": _load_sdxl_t2i,
     "joycaption": _load_joycaption,
 }
 
@@ -1489,53 +1688,12 @@ def _edit_test(
 ) -> Image.Image:
     _abort_if(cancel_checker)
     if pipeline:
-        pipeline.report("load_model", 1.0, detail="тест — FLUX не загружается")
+        pipeline.report("load_model", 1.0, detail="тест — GPU-модель не загружается")
         pipeline.report("generate", 0.0, detail="тест — генерация пропущена")
     _abort_if(cancel_checker)
     if pipeline:
         pipeline.report("generate", 1.0, detail="тест — возвращён оригинал")
     return image.copy()
-
-
-def _edit_flux(
-    state: ModelState,
-    image: Image.Image,
-    prompt: str,
-    pipeline: PipelineProgress | None = None,
-    cancel_checker: CancelFn | None = None,
-    pause_checker: PauseFn | None = None,
-    job_id: str | None = None,
-    model_id: str = "flux-kontext",
-    resume_job_id: str | None = None,
-    inference_steps: int | None = None,
-) -> Image.Image:
-    torch = _import_torch()
-    generator, _seed = _diffusion_generator(torch)
-    steps = inference_steps or FLUX_INFERENCE_STEPS
-    gen_h, gen_w = _pipeline_pixel_dims(state.pipe, image)
-    if image.size != (gen_w, gen_h):
-        image = image.resize((gen_w, gen_h), Image.Resampling.LANCZOS)
-    if job_id:
-        from job_logger import log_job
-
-        preview = prompt if len(prompt) <= 220 else prompt[:217] + "..."
-        log_job(job_id, f"FLUX prompt: {preview}")
-    return _run_pipe(
-        state.pipe,
-        pipeline=pipeline,
-        total_steps=steps,
-        cancel_checker=cancel_checker,
-        pause_checker=pause_checker,
-        preview_image=image,
-        job_id=job_id,
-        model_id=model_id,
-        flux_kontext=True,
-        resume_job_id=resume_job_id,
-        prompt=prompt,
-        image=image,
-        guidance_scale=FLUX_GUIDANCE_SCALE,
-        generator=generator,
-    )
 
 
 def augment_prompt_for_qwen_reference(prompt: str, n_refs: int = 1) -> str:
@@ -1557,7 +1715,7 @@ def describe_reference_for_prompt(
     *,
     prefer_cpu: bool = False,
 ) -> str:
-    """JoyCaption description of optional reference photo (used in prompt for FLUX / approval)."""
+    """JoyCaption description of optional reference photo (used in the edit prompt)."""
     image = _prepare_image_for_analysis(reference_bytes)
     if prefer_cpu:
         return _run_joycaption_ephemeral_cpu(
@@ -1597,6 +1755,7 @@ def _edit_qwen(
     resume_job_id: str | None = None,
     inference_steps: int | None = None,
     reference_images: list[Image.Image] | None = None,
+    lora_path: str | None = None,
 ) -> Image.Image:
     torch = _import_torch()
     generator, _seed = _diffusion_generator(torch)
@@ -1615,12 +1774,126 @@ def _edit_qwen(
             job_id=job_id,
             model_id=model_id,
             resume_job_id=resume_job_id,
+            lora_path=lora_path,
             image=pipe_image,
             prompt=prompt_text,
             negative_prompt=" ",
             true_cfg_scale=QWEN_TRUE_CFG_SCALE,
             generator=generator,
         )
+
+
+def _generate_qwen_t2i(
+    state: ModelState,
+    prompt: str,
+    *,
+    width: int,
+    height: int,
+    pipeline: PipelineProgress | None = None,
+    cancel_checker: CancelFn | None = None,
+    pause_checker: PauseFn | None = None,
+    job_id: str | None = None,
+    model_id: str = "qwen-image-2512",
+    inference_steps: int | None = None,
+) -> Image.Image:
+    torch = _import_torch()
+    generator, _seed = _diffusion_generator(torch)
+    steps = inference_steps or QWEN_T2I_STEPS
+    with torch.inference_mode():
+        return _run_pipe(
+            state.pipe,
+            pipeline=pipeline,
+            total_steps=steps,
+            cancel_checker=cancel_checker,
+            pause_checker=pause_checker,
+            preview_image=None,
+            job_id=job_id,
+            model_id=model_id,
+            resume_job_id=None,
+            lora_path=None,
+            prompt=prompt,
+            negative_prompt=" ",
+            width=int(width),
+            height=int(height),
+            true_cfg_scale=QWEN_T2I_CFG,
+            generator=generator,
+        )
+
+
+def _generate_sdxl_t2i(
+    state: ModelState,
+    prompt: str,
+    *,
+    width: int,
+    height: int,
+    pipeline: PipelineProgress | None = None,
+    cancel_checker: CancelFn | None = None,
+    pause_checker: PauseFn | None = None,
+    job_id: str | None = None,
+    model_id: str = "sdxl-base-1.0",
+    inference_steps: int | None = None,
+) -> Image.Image:
+    torch = _import_torch()
+    generator, _seed = _diffusion_generator(torch)
+    steps = inference_steps or SDXL_T2I_STEPS
+    with torch.inference_mode():
+        return _run_pipe(
+            state.pipe,
+            pipeline=pipeline,
+            total_steps=steps,
+            cancel_checker=cancel_checker,
+            pause_checker=pause_checker,
+            preview_image=None,
+            job_id=job_id,
+            model_id=model_id,
+            resume_job_id=None,
+            lora_path=None,
+            prompt=prompt,
+            negative_prompt="blurry, low quality, watermark, extra fingers, deformed",
+            width=int(width),
+            height=int(height),
+            guidance_scale=SDXL_T2I_CFG,
+            generator=generator,
+        )
+
+
+def generate_image(
+    prompt: str,
+    *,
+    model_id: str = "qwen-image-2512",
+    width: int = 1024,
+    height: int = 1024,
+    inference_steps: int | None = None,
+    pipeline: PipelineProgress | None = None,
+    cancel_checker: CancelFn | None = None,
+    job_id: str | None = None,
+) -> bytes:
+    """Text-to-image. Unloads Edit/JoyCaption first."""
+    state_meta = MODELS.get(model_id)
+    if state_meta is None or state_meta.kind not in T2I_KINDS:
+        raise ValueError(f"Модель {model_id} не умеет генерацию с нуля")
+    steps = inference_steps_for_model(model_id, inference_steps)
+    ensure_model_loaded(model_id, pipeline=pipeline, cancel_checker=cancel_checker)
+    state = MODELS[model_id]
+    if not _model_ready(state):
+        raise RuntimeError(state.error or "Модель не загружена")
+    if pipeline:
+        pipeline.report("generate", 0.0, detail=_generate_start_detail(model_id))
+    gen_fn = _generate_sdxl_t2i if state.kind == "sdxl_t2i" else _generate_qwen_t2i
+    image = gen_fn(
+        state,
+        prompt,
+        width=width,
+        height=height,
+        pipeline=pipeline,
+        cancel_checker=cancel_checker,
+        job_id=job_id,
+        model_id=model_id,
+        inference_steps=steps,
+    )
+    if pipeline:
+        pipeline.report("generate", 1.0, detail="генерация завершена")
+    return _image_to_png(image)
 
 
 def build_joycaption_prompt(
@@ -1631,8 +1904,8 @@ def build_joycaption_prompt(
     *,
     prefer_cpu: bool = False,
 ) -> tuple[str, str]:
-    """Сгенерировать промпт JoyCaption и отформатировать для FLUX."""
-    from prompt_helper import format_for_flux
+    """Сгенерировать промпт JoyCaption и отформатировать для Qwen-Image-Edit."""
+    from prompt_helper import format_for_qwen
     from output_resolution import image_dimensions_label
 
     src_label = image_dimensions_label(image_bytes)
@@ -1657,7 +1930,7 @@ def build_joycaption_prompt(
             cancel_checker=cancel_checker,
         )
     else:
-        # Free leftover VRAM from a previous Qwen/FLUX run so JoyCaption can load.
+        # Free leftover VRAM from a previous Qwen run so JoyCaption can load.
         _free_gpu_memory()
         ensure_model_loaded(
             "joycaption",
@@ -1682,7 +1955,7 @@ def build_joycaption_prompt(
         state.pipe = None
         state.processor = None
         _free_gpu_memory()
-    formatted = format_for_flux(raw)
+    formatted = format_for_qwen(raw)
     if pipeline and not prefer_cpu:
         pipeline.report("translate", 1.0, detail="промпт JoyCaption готов")
     return formatted, raw
@@ -1739,21 +2012,24 @@ def _edit_joycaption(
     cancel_checker: CancelFn | None = None,
     pause_checker: PauseFn | None = None,
     on_prompt: Callable[[str, str], None] | None = None,
-    flux_prompt: str | None = None,
+    approved_prompt: str | None = None,
     job_id: str | None = None,
     resume_job_id: str | None = None,
+    inference_steps: int | None = None,
+    reference_images: list[Image.Image] | None = None,
+    lora_path: str | None = None,
 ) -> Image.Image:
-    from prompt_helper import format_for_flux
+    from prompt_helper import format_for_qwen
 
-    if flux_prompt:
-        formatted = flux_prompt
+    if approved_prompt:
+        formatted = approved_prompt
     else:
         if pipeline:
             pipeline.report("translate", 0.15, detail="JoyCaption анализирует фото")
         edit_prompt = _joycaption_prompt(
             state, image, prompt, pipeline=pipeline, cancel_checker=cancel_checker
         )
-        formatted = format_for_flux(edit_prompt)
+        formatted = format_for_qwen(edit_prompt)
         if on_prompt:
             on_prompt(formatted, edit_prompt)
         if pipeline:
@@ -1763,9 +2039,9 @@ def _edit_joycaption(
         state.processor = None
         _free_gpu_memory()
 
-    chain_id = state.chain_to or "flux-kontext"
+    chain_id = state.chain_to or "qwen36-hauhau"
     if pipeline:
-        pipeline.report("load_model", 0.05, detail="загрузка FLUX Kontext (после JoyCaption)")
+        pipeline.report("load_model", 0.05, detail="загрузка Qwen-Image-Edit (после JoyCaption)")
     ensure_model_loaded(chain_id, pipeline=pipeline, cancel_checker=cancel_checker)
 
     chain = MODELS[chain_id]
@@ -1773,7 +2049,7 @@ def _edit_joycaption(
         chain.pipe.set_progress_bar_config(disable=True)
     if pipeline:
         pipeline.report("generate", 0.0, detail=_generate_start_detail(chain_id))
-    return _edit_flux(
+    return _edit_qwen(
         chain,
         image,
         formatted,
@@ -1783,13 +2059,16 @@ def _edit_joycaption(
         job_id=job_id,
         model_id=chain_id,
         resume_job_id=resume_job_id,
+        inference_steps=inference_steps,
+        reference_images=reference_images,
+        lora_path=lora_path,
     )
 
 
 _EDITORS = {
-    "flux-kontext": _edit_flux,
     "qwen35-hauhau": _edit_qwen,
     "qwen36-hauhau": _edit_qwen,
+    "qwen-edit-2511": _edit_qwen,
     "joycaption": _edit_joycaption,
 }
 
@@ -1802,12 +2081,13 @@ def edit_image(
     cancel_checker: CancelFn | None = None,
     pause_checker: PauseFn | None = None,
     on_prompt: Callable[[str, str], None] | None = None,
-    flux_prompt: str | None = None,
+    approved_prompt: str | None = None,
     job_id: str | None = None,
     resume_job_id: str | None = None,
     inference_steps: int | None = None,
     reference_image_bytes: bytes | None = None,
     reference_images_bytes: list[bytes] | None = None,
+    lora_path: str | None = None,
 ) -> bytes:
     _check_control(cancel_checker, pause_checker)
     steps = inference_steps_for_model(model_id, inference_steps)
@@ -1816,8 +2096,8 @@ def edit_image(
     if uses_joycaption_flow(model_id):
         if is_test_model(model_id):
             pass
-        elif flux_prompt:
-            chain_id = MODELS["joycaption"].chain_to or "flux-kontext"
+        elif approved_prompt:
+            chain_id = MODELS["joycaption"].chain_to or "qwen36-hauhau"
             ensure_model_loaded(chain_id, pipeline=pipeline, cancel_checker=cancel_checker)
         else:
             ensure_model_loaded("joycaption", pipeline=pipeline, cancel_checker=cancel_checker)
@@ -1869,7 +2149,7 @@ def edit_image(
             if pipeline:
                 pipeline.report("generate", 0.0, detail="тест — без генерации на GPU")
             result = _edit_test(image, pipeline, cancel_checker)
-        elif flux_prompt:
+        elif approved_prompt:
             chain = MODELS[chain_id]
             if not _model_ready(chain):
                 raise RuntimeError(chain.error or "Модель не загружена")
@@ -1880,10 +2160,10 @@ def edit_image(
                     detail=_generate_start_detail(chain_id),
                     journal_replace=False,
                 )
-            result = _edit_flux(
+            result = _edit_qwen(
                 chain,
                 image,
-                flux_prompt,
+                approved_prompt,
                 pipeline,
                 cancel_checker,
                 pause_checker=pause_checker,
@@ -1891,6 +2171,8 @@ def edit_image(
                 model_id=chain_id,
                 resume_job_id=resume_job_id,
                 inference_steps=steps,
+                reference_images=reference_images,
+                lora_path=lora_path,
             )
         else:
             if not _model_ready(state):
@@ -1905,6 +2187,9 @@ def edit_image(
                 on_prompt=on_prompt,
                 job_id=job_id,
                 resume_job_id=resume_job_id,
+                inference_steps=steps,
+                reference_images=reference_images,
+                lora_path=lora_path,
             )
     else:
         state = MODELS[model_id]
@@ -1926,11 +2211,11 @@ def edit_image(
             "job_id": job_id,
             "resume_job_id": resume_job_id,
         }
-        if model_id in QWEN_EDIT_IDS or model_id == "flux-kontext":
+        if model_id in QWEN_EDIT_IDS:
             edit_kwargs["model_id"] = model_id
             edit_kwargs["inference_steps"] = steps
-        if model_id in QWEN_EDIT_IDS:
             edit_kwargs["reference_images"] = reference_images
+            edit_kwargs["lora_path"] = lora_path
         result = editor(state, image, prompt, **edit_kwargs)
 
     if job_id:
@@ -1940,3 +2225,4 @@ def edit_image(
     if pipeline:
         pipeline.report("generate", 1.0, detail="генерация завершена")
     return _image_to_png(result)
+

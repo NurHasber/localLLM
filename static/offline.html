@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#1a1d27" />
+  <title>Photone — выключено</title>
+  <link rel="icon" href="/static/favicon.svg?v=photone" type="image/svg+xml" />
+  <link rel="icon" href="/static/favicon.ico?v=photone" sizes="32x32" />
+  <link rel="stylesheet" href="/static/offline.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <img src="/static/favicon.svg?v=photone" width="40" height="40" alt="" />
+      <strong>Photone</strong>
+    </div>
+    <h1>Приложение выключено</h1>
+    <p>Сервис <code>http://127.0.0.1:7860</code> сейчас не запущен. Эта страница открыта из кэша браузера.</p>
+    <button type="button" class="start-btn" id="btnStart">Запустить Photone</button>
+    <p class="hint">Кнопка вызывает <code>localphotoai://start</code> и поднимает иконку в трее без окна cmd.</p>
+    <p class="status" id="status"></p>
+    <ol>
+      <li>Нажмите «Запустить Photone»</li>
+      <li>Разрешите открытие приложения Windows, если спросит</li>
+      <li>Через несколько секунд вкладка обновится сама</li>
+    </ol>
+  </div>
+  <script src="/static/offline.js"></script>
+  <script src="/static/sw-register.js"></script>
+</body>
+</html>

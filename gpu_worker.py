@@ -31,11 +31,12 @@ def main(work_dir: str) -> int:
     job_id = manifest["job_id"]
     model_id = manifest["model_id"]
     prompt = manifest["prompt"]
-    flux_prompt = manifest.get("flux_prompt")
+    approved_prompt = manifest.get("approved_prompt") or manifest.get("flux_prompt")
     resume = bool(manifest.get("resume"))
     inference_steps = int(manifest.get("inference_steps") or 0) or None
+    lora_id = str(manifest.get("lora_id") or "")
 
-    from image_editor import edit_image, uses_joycaption_flow
+    from image_editor import edit_image, resolve_lora_path, uses_joycaption_flow
     from job_errors import JobCancelled, JobPaused
 
     raw = (work / "input.bin").read_bytes()
@@ -64,11 +65,12 @@ def main(work_dir: str) -> int:
             pipeline=pipeline,
             cancel_checker=None,
             pause_checker=pause_checker,
-            flux_prompt=flux_prompt if uses_joycaption_flow(model_id) else None,
+            approved_prompt=approved_prompt if uses_joycaption_flow(model_id) else None,
             job_id=job_id,
             resume_job_id=job_id if resume else None,
             inference_steps=inference_steps,
             reference_images_bytes=reference_list or None,
+            lora_path=resolve_lora_path(lora_id) if lora_id else None,
         )
         (work / "result.png").write_bytes(result)
         (work / "done.json").write_text(

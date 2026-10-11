@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <title>Photone — Создание фото</title>
+  <!-- ui-build: 2026-09-28-t2i-models -->
+  <link rel="icon" href="/static/favicon.svg?v=photone" type="image/svg+xml" />
+  <link rel="icon" href="/static/favicon.ico?v=photone" sizes="32x32" />
+  <style>
+    :root {
+      --bg: #0f1117; --panel: #171a22; --border: #2a3040; --text: #e8ecf4;
+      --muted: #8b93a7; --accent: #5b8def; --ok: #3ecf8e; --warn: #e8b84a; --err: #f07178;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    header {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); background: var(--panel);
+    }
+    .header-left { display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
+    header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+    .site-nav { display: flex; gap: 0.85rem; }
+    .site-nav a { color: var(--muted); text-decoration: none; }
+    .site-nav a:hover, .site-nav a.active { color: var(--text); font-weight: 600; }
+    .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #252a36; color: var(--muted); }
+    .badge.busy { background: #3d2e14; color: var(--warn); }
+    .badge.ok { background: #1a3328; color: var(--ok); }
+    .work-live {
+      display: none; align-items: center; gap: 0.75rem; padding: 0.7rem 1.25rem;
+      border-bottom: 1px solid var(--border); background: #241c10;
+    }
+    .work-live.on { display: flex; }
+    .work-live.done { background: #14241c; }
+    .work-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--warn); animation: pulse 1.1s ease-in-out infinite; }
+    .work-live.done .work-dot { background: var(--ok); animation: none; }
+    @keyframes pulse { 50% { opacity: 0.35; } }
+    .work-live span { color: var(--muted); font-size: 12px; }
+    main { max-width: 960px; margin: 0 auto; padding: 1.25rem; }
+    section {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 1rem 1.1rem 1.15rem; margin-bottom: 1rem;
+    }
+    h2 { margin: 0 0 0.75rem; font-size: 1rem; }
+    p.hint { color: var(--muted); margin: 0 0 0.85rem; font-size: 13px; }
+    label { display: block; margin: 0.5rem 0 0.35rem; color: var(--muted); font-size: 12px; }
+    textarea, select {
+      width: 100%; background: #0f1117; border: 1px solid var(--border); color: var(--text);
+      border-radius: 8px; padding: 0.5rem 0.65rem; font: inherit;
+    }
+    textarea { min-height: 7rem; resize: vertical; }
+    .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; margin-top: 0.65rem; }
+    button {
+      background: #252a36; border: 1px solid var(--border); color: var(--text);
+      border-radius: 8px; padding: 0.45rem 0.8rem; cursor: pointer; font: inherit;
+    }
+    button.primary { background: #24365c; border-color: #3d5a99; }
+    button.warn { background: #3d2e14; border-color: #6a5420; color: var(--warn); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .bar { height: 8px; background: #252a36; border-radius: 99px; overflow: hidden; margin: 0.6rem 0 0.35rem; }
+    .bar > span { display: block; height: 100%; background: var(--accent); width: 0%; }
+    .msg { color: var(--muted); font-size: 13px; }
+    .msg.err { color: var(--err); }
+    .preview { margin-top: 0.75rem; background: #0a0c10; border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; text-align: center; }
+    .preview img { max-width: 100%; max-height: 70vh; height: auto; }
+    .toast { position: fixed; bottom: 1rem; right: 1rem; background: #252a36; border: 1px solid var(--border); padding: 0.65rem 1rem; border-radius: 8px; display: none; max-width: 360px; z-index: 200; }
+    .toast.show { display: block; }
+    .toast.err { border-color: var(--err); color: var(--err); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>Photone</h1>
+      <nav class="site-nav">
+        <a href="/">Обработка фото</a>
+        <a href="/sort">Сортировка фото</a>
+        <a href="/generate" class="active">Создание фото</a>
+        <a href="/music">AI Sound</a>
+        <a href="/speech">AI Голос</a>
+      </nav>
+    </div>
+    <span id="statusBadge" class="badge">загрузка…</span>
+  </header>
+  <div id="workLive" class="work-live" hidden>
+    <div class="work-dot"></div>
+    <div>
+      <strong id="workLiveTitle">Генерация</strong>
+      <span id="workLiveDetail">запуск…</span>
+    </div>
+  </div>
+  <main>
+    <section>
+      <h2>Промпт</h2>
+      <p class="hint">Генерация с нуля, не правка фото. Веса T2I не живут в 24 ГБ вместе с Qwen Edit. Русский текст переводится через Ollama/HauhauCS.</p>
+      <label for="t2iModel">Модель</label>
+      <select id="t2iModel"></select>
+      <p id="modelExpected" class="hint"></p>
+      <textarea id="prompt" placeholder="A quiet street at dusk, wet asphalt, neon signs, cinematic lighting"></textarea>
+      <div class="row">
+        <div>
+          <label for="aspect">Формат</label>
+          <select id="aspect"></select>
+        </div>
+        <div>
+          <label for="steps">Шагов</label>
+          <select id="steps"></select>
+        </div>
+      </div>
+      <div class="row">
+        <button type="button" id="goBtn" class="primary">Сгенерировать</button>
+        <button type="button" id="stopBtn" class="warn" disabled>Стоп</button>
+      </div>
+      <div class="bar"><span id="barFill"></span></div>
+      <p id="progressMsg" class="msg">Введите промпт и нажмите «Сгенерировать».</p>
+      <p id="promptUsed" class="msg"></p>
+    </section>
+    <section>
+      <h2>Результат</h2>
+      <div class="preview"><img id="resultImg" alt="" hidden /></div>
+      <div class="row">
+        <a id="downloadLink" hidden download="qwen-t2i.png">Скачать PNG</a>
+      </div>
+    </section>
+  </main>
+  <div id="toast" class="toast"></div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let pollTimer = null;
+    let lastPhase = "";
+
+    function toast(text, err) {
+      const el = $("toast");
+      el.textContent = text;
+      el.className = "toast show" + (err ? " err" : "");
+      setTimeout(() => el.classList.remove("show"), 4500);
+    }
+    async function api(path, opts) {
+      const res = await fetch(path, opts);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = data.detail || res.statusText;
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+      return data;
+    }
+    function ensurePoll() {
+      if (!pollTimer) pollTimer = setInterval(refresh, 700);
+    }
+    function stopPoll() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+    function render(s) {
+      const busy = !!s.busy;
+      $("statusBadge").textContent = busy ? (s.message || "GPU") : (s.gpu_busy ? "GPU занят очередью" : "готово");
+      $("statusBadge").className = "badge " + (busy || s.gpu_busy ? "busy" : "ok");
+      const live = $("workLive");
+      live.hidden = !(busy || s.phase === "done" || s.phase === "error");
+      live.classList.toggle("on", !live.hidden);
+      live.classList.toggle("done", s.phase === "done");
+      $("workLiveTitle").textContent = s.phase === "done" ? "Готово" : (s.phase === "error" ? "Ошибка" : "Генерация с нуля");
+      $("workLiveDetail").textContent = s.message || "";
+      $("barFill").style.width = (s.progress || 0) + "%";
+      $("progressMsg").className = "msg" + (s.error ? " err" : "");
+      $("progressMsg").textContent = s.message || "";
+      $("promptUsed").textContent = s.prompt_used ? "EN: " + s.prompt_used : "";
+      $("goBtn").disabled = busy || s.gpu_busy;
+      $("stopBtn").disabled = !busy;
+      if (lastPhase && lastPhase !== s.phase) {
+        if (s.phase === "done") toast("Картинка готова");
+        if (s.phase === "error") toast(s.error || "Ошибка", true);
+      }
+      lastPhase = s.phase;
+      if (s.has_result) {
+        const img = $("resultImg");
+        img.hidden = false;
+        img.src = "/api/t2i/result?t=" + Date.now();
+        const a = $("downloadLink");
+        a.hidden = false;
+        a.href = img.src;
+      }
+      if (busy) ensurePoll(); else stopPoll();
+    }
+    async function refresh() {
+      try { render(await api("/api/t2i/status")); } catch (e) {}
+    }
+    $("goBtn").onclick = async () => {
+      try {
+        render(await api("/api/t2i/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: $("prompt").value,
+            model_id: $("t2iModel").value,
+            aspect: $("aspect").value,
+            steps: Number($("steps").value),
+          }),
+        }));
+        toast("Генерация запущена");
+      } catch (e) { toast(e.message, true); }
+    };
+    $("stopBtn").onclick = async () => {
+      try { render(await api("/api/t2i/stop", { method: "POST" })); }
+      catch (e) { toast(e.message, true); }
+    };
+    (async () => {
+      const meta = await api("/api/t2i/models");
+      const list = meta.models || [];
+      const saved = localStorage.getItem("t2iModel") || "";
+      $("t2iModel").innerHTML = "";
+      list.forEach((m) => {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = m.cached || m.ready ? m.name : `${m.name} (~${m.size_gb} GB, скачается)`;
+        if (m.id === saved) opt.selected = true;
+        $("t2iModel").appendChild(opt);
+      });
+      if (!$("t2iModel").value && list[0]) $("t2iModel").value = list[0].id;
+      function fillStepsFor(model) {
+        const m = list.find((x) => x.id === model) || list[0] || {};
+        $("steps").innerHTML = "";
+        (m.step_presets || [50]).forEach((n) => {
+          const opt = document.createElement("option");
+          opt.value = n;
+          opt.textContent = n;
+          if (n === (m.default_steps || 50)) opt.selected = true;
+          $("steps").appendChild(opt);
+        });
+        $("modelExpected").textContent = m.expected || m.description || "";
+      }
+      $("t2iModel").onchange = () => {
+        localStorage.setItem("t2iModel", $("t2iModel").value);
+        fillStepsFor($("t2iModel").value);
+      };
+      fillStepsFor($("t2iModel").value);
+      for (const [k, v] of Object.entries(meta.aspects || {})) {
+        const opt = document.createElement("option");
+        opt.value = k;
+        opt.textContent = `${k} · ${v.width}×${v.height}`;
+        $("aspect").appendChild(opt);
+      }
+      await refresh();
+    })().catch((e) => toast(e.message, true));
+  </script>
+  <script src="/static/sw-register.js"></script>
+</body>
+</html>

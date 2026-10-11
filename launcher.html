@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Photone — запуск</title>
+  <link rel="icon" href="static/favicon.svg?v=photone" type="image/svg+xml" />
+  <link rel="icon" href="static/favicon.ico?v=photone" sizes="32x32" />
+  <style>
+    :root { --bg:#0f1117; --panel:#171a22; --border:#2a3040; --text:#e8ecf4; --muted:#8b93a7; --accent:#6c8cff; }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; font:16px/1.45 system-ui,sans-serif; color:var(--text);
+      background: radial-gradient(700px 380px at 12% -8%, #1c2440 0%, transparent 55%), var(--bg);
+      display:flex; align-items:center; justify-content:center; padding:2rem 1rem; }
+    .card { width:min(480px,100%); background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:1.6rem 1.5rem 1.4rem; }
+    .brand { display:flex; align-items:center; gap:0.75rem; margin-bottom:0.9rem; }
+    .brand img { width:40px; height:40px; }
+    h1 { margin:0; font-size:1.2rem; }
+    p { color:var(--muted); margin:0 0 0.85rem; }
+    button { appearance:none; width:100%; border:0; border-radius:10px; padding:0.75rem 1rem; font:inherit; font-weight:650;
+      background:var(--accent); color:#0b1020; cursor:pointer; }
+    button:disabled { opacity:0.55; cursor:wait; }
+    .hint { font-size:13px; }
+    code { color:#c9d4ff; }
+    #status { min-height:1.3em; font-size:13px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <img src="static/favicon.svg?v=photone" alt="" />
+      <h1>Photone</h1>
+    </div>
+    <p>Офлайн-страница: поднимает приложение в трее без окна cmd/Python и открывает сайт.</p>
+    <button type="button" id="btnStart">Запустить приложение</button>
+    <p class="hint">Кнопка вызывает <code>localphotoai://start</code>. Один раз разрешите Windows открыть приложение. Протокол ставится при первом запуске из трея или <code>scripts\register-offline-protocol.bat</code>.</p>
+    <p id="status"></p>
+  </div>
+  <script>
+    const START = "localphotoai://start";
+    const PANEL = "http://127.0.0.1:7860/";
+    const btn = document.getElementById("btnStart");
+    const status = document.getElementById("status");
+
+    function invoke(url) {
+      const iframe = document.createElement("iframe");
+      iframe.style.cssText = "display:none;width:0;height:0;border:0";
+      iframe.src = url;
+      document.body.appendChild(iframe);
+      setTimeout(() => iframe.remove(), 2500);
+    }
+    async function up() {
+      try {
+        const res = await fetch(PANEL + "api/status?_=" + Date.now(), { cache: "no-store" });
+        return res.ok;
+      } catch { return false; }
+    }
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      status.textContent = "Запускаю Photone…";
+      invoke(START);
+      for (let i = 1; i <= 40; i++) {
+        if (i === 1 || i % 4 === 0) invoke(START);
+        status.textContent = "Жду сервер… (" + i + "/40)";
+        if (await up()) {
+          status.textContent = "Готово, открываю сайт…";
+          location.href = PANEL + "?t=" + Date.now();
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 700));
+      }
+      status.textContent = "Сервер не ответил. Запустите start-tray.bat или разрешите протокол Windows.";
+      btn.disabled = false;
+    });
+  </script>
+</body>
+</html>

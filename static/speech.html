@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <title>Photone — AI Голос</title>
+  <link rel="icon" href="/static/favicon.svg?v=photone" type="image/svg+xml" />
+  <link rel="icon" href="/static/favicon.ico?v=photone" sizes="32x32" />
+  <style>
+    :root {
+      --bg: #0f1117; --panel: #171a22; --border: #2a3040; --text: #e8ecf4;
+      --muted: #8b93a7; --accent: #5b8def; --ok: #3ecf8e; --warn: #e8b84a; --err: #f07178;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    header {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); background: var(--panel);
+    }
+    .header-left { display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
+    header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+    .site-nav { display: flex; gap: 0.85rem; }
+    .site-nav a { color: var(--muted); text-decoration: none; }
+    .site-nav a:hover, .site-nav a.active { color: var(--text); font-weight: 600; }
+    .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #252a36; color: var(--muted); }
+    .badge.busy { background: #3d2e14; color: var(--warn); }
+    .badge.ok { background: #1a3328; color: var(--ok); }
+    main { max-width: 980px; margin: 0 auto; padding: 1.25rem; }
+    section {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 1rem 1.1rem 1.15rem; margin-bottom: 1rem;
+    }
+    h2 { margin: 0 0 0.75rem; font-size: 1rem; }
+    p.hint { color: var(--muted); margin: 0 0 0.85rem; font-size: 13px; }
+    label { display: block; margin: 0.5rem 0 0.35rem; color: var(--muted); font-size: 12px; }
+    textarea, select, input[type="file"] {
+      width: 100%; background: #0f1117; border: 1px solid var(--border); color: var(--text);
+      border-radius: 8px; padding: 0.5rem 0.65rem; font: inherit;
+    }
+    textarea { min-height: 7rem; resize: vertical; }
+    .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: flex-end; margin-top: 0.65rem; }
+    .row > * { flex: 1; min-width: 10rem; }
+    button {
+      background: #1e2430; border: 1px solid var(--border); color: var(--text);
+      border-radius: 8px; padding: 0.45rem 0.8rem; font: inherit; cursor: pointer;
+    }
+    button.primary { background: var(--accent); border-color: transparent; color: #fff; }
+    button.live { background: #f07178; border-color: transparent; color: #1a0c0e; }
+    button:disabled { opacity: 0.45; cursor: default; }
+    .rec-bar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+    button.rec { min-width: 10.5rem; font-weight: 650; background: #3d1c22; border-color: #8a3a44; color: #f07178; }
+    button.rec.live { background: #f07178; border-color: transparent; color: #1a0c0e; }
+    .rec-dot {
+      width: 12px; height: 12px; border-radius: 50%; background: #f07178; flex: 0 0 auto;
+      box-shadow: 0 0 0 0 rgba(240, 113, 120, 0.65);
+      animation: rec-pulse 1.15s ease-out infinite;
+    }
+    @keyframes rec-pulse {
+      70% { box-shadow: 0 0 0 9px rgba(240, 113, 120, 0); }
+    }
+    .rec-time {
+      font-variant-numeric: tabular-nums; font-size: 1.35rem; font-weight: 650;
+      min-width: 4.6rem; letter-spacing: 0.02em;
+    }
+    .rec-box.live .rec-time { color: #f07178; }
+    .rec-state { color: var(--muted); font-size: 13px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.35rem 0 0.55rem; }
+    .chip {
+      background: #12151c; border: 1px solid var(--border); color: var(--text);
+      border-radius: 999px; padding: 0.22rem 0.65rem; font-size: 12px; cursor: pointer;
+    }
+    .bar { height: 6px; background: #12151c; border-radius: 99px; overflow: hidden; margin-top: 0.8rem; }
+    .bar > span { display: block; height: 100%; background: var(--accent); width: 0%; }
+    .err { color: var(--err); white-space: pre-wrap; margin: 0.6rem 0 0; }
+    audio { width: 100%; margin-top: 0.7rem; }
+    .path { color: var(--muted); font-size: 12px; margin-top: 0.4rem; }
+    .lib-head { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; margin-bottom: 0.65rem; }
+    .crumbs { display: flex; flex-wrap: wrap; gap: 0.2rem; align-items: center; flex: 1; min-width: 12rem; }
+    .crumb {
+      background: transparent; border: 0; color: var(--accent); padding: 0.2rem 0.35rem; cursor: pointer;
+    }
+    .crumb.drop { outline: 1px dashed var(--accent); background: #1a2438; border-radius: 6px; }
+    .crumb-sep { color: var(--muted); }
+    .lib-path { color: var(--muted); font-size: 12px; margin: 0 0 0.55rem; word-break: break-all; }
+    .lib-list { display: flex; flex-direction: column; gap: 2px; overflow-x: auto; }
+    .lib-cols, .lib-row {
+      display: grid; grid-template-columns: 28px 28px minmax(8rem, 1fr) 9.4rem 9.4rem 4.4rem 4.8rem;
+      gap: 0.35rem; align-items: center;
+      padding: 0.35rem 0.45rem; width: 100%; text-align: left; font: inherit;
+    }
+    .lib-cols { color: var(--muted); font-size: 11px; padding-bottom: 0.2rem; }
+    .lib-cols button {
+      background: transparent; border: 0; color: var(--muted); padding: 0; text-align: left;
+      font: inherit; cursor: pointer;
+    }
+    .lib-cols button:hover, .lib-cols button.active { color: var(--text); }
+    .lib-row {
+      border-radius: 8px; border: 1px solid transparent; color: inherit; background: transparent;
+    }
+    .lib-row:hover { background: #12151c; }
+    .lib-row.dir { cursor: pointer; }
+    .lib-row.file { cursor: pointer; }
+    .lib-row.file.selected { border-color: var(--accent); background: #1a2438; }
+    .lib-row.file.fresh { border-color: var(--ok); background: #1a3328; }
+    .lib-row audio { grid-column: 1 / -1; width: 100%; margin: 0.15rem 0 0.1rem; }
+    .lib-row.drop { border-color: var(--accent); background: #1a2438; }
+    .source-chip[hidden] { display: none; }
+    .source-chip {
+      display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+      background: #12151c; border: 1px solid var(--accent); border-radius: 8px;
+      padding: 0.45rem 0.6rem; margin: 0.35rem 0 0.55rem;
+    }
+    .source-chip .k { color: var(--muted); font-size: 12px; }
+    .source-chip .n { font-weight: 600; word-break: break-all; }
+    .source-chip button { padding: 0.15rem 0.5rem; }
+    .grip {
+      width: 22px; height: 22px; display: grid; place-items: center; cursor: grab; color: var(--muted);
+      border-radius: 4px; user-select: none;
+    }
+    .grip:active { cursor: grabbing; }
+    .ico { width: 22px; text-align: center; color: var(--muted); }
+    .lib-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lib-name-edit { display: flex; align-items: center; gap: 0.15rem; min-width: 0; }
+    .lib-name-edit input {
+      flex: 1; min-width: 5rem; width: 100%;
+      background: #0f1117; border: 1px solid var(--accent); color: var(--text);
+      border-radius: 6px; padding: 0.12rem 0.4rem; font: inherit;
+    }
+    .lib-ext { color: var(--muted); flex-shrink: 0; user-select: none; }
+    .lib-meta, .lib-date { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .lib-date { font-variant-numeric: tabular-nums; }
+    .lib-del {
+      background: #3d1c22; border-color: #6a2a34; color: var(--err);
+      padding: 0.2rem 0.5rem; font-size: 12px; justify-self: end;
+    }
+    .lib-del:hover { background: #5a2430; }
+    .lib-empty { color: var(--muted); padding: 0.5rem 0.2rem; }
+    .toast {
+      position: fixed; bottom: 1rem; right: 1rem; background: #252a36; border: 1px solid var(--border);
+      padding: 0.65rem 1rem; border-radius: 8px; display: none; max-width: 360px; z-index: 200;
+    }
+    .toast.show { display: block; }
+    .toast.err { border-color: var(--err); color: var(--err); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>Photone</h1>
+      <nav class="site-nav">
+        <a href="/">Обработка фото</a>
+        <a href="/sort">Сортировка фото</a>
+        <a href="/generate">Создание фото</a>
+        <a href="/music">AI Sound</a>
+        <a href="/speech" class="active">AI Голос</a>
+      </nav>
+    </div>
+    <span id="statusBadge" class="badge">загрузка…</span>
+  </header>
+  <main>
+    <section>
+      <h2>Синтез речи</h2>
+      <p class="hint" id="modelHint">Пять локальных голосов. Silero, Piper и Kokoro почти сразу. MOSS Nano — клон на CPU. MOSS Local — 4B на GPU.</p>
+      <label for="engine">Синтезатор</label>
+      <select id="engine"></select>
+      <div class="row">
+        <div>
+          <label for="lang">Язык</label>
+          <select id="lang">
+            <option value="ru">Русский</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+        <div>
+          <label for="voice">Голос</label>
+          <select id="voice"></select>
+        </div>
+      </div>
+      <label for="text">Текст</label>
+      <textarea id="text">Протяжный рог на арене стих. Это проверка локального голоса.</textarea>
+      <div class="chips" id="samples"></div>
+      <div id="refWrap">
+        <div class="source-chip" id="sourceChip" hidden>
+          <span class="k">Референс</span>
+          <span class="n" id="sourceName"></span>
+          <button type="button" id="sourceClear">Снять</button>
+        </div>
+        <label for="reference">Референс для клона, необязательно</label>
+        <input id="reference" type="file" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a" />
+      </div>
+      <div class="row">
+        <button id="goBtn" class="primary" type="button">Синтезировать</button>
+        <button id="stopBtn" type="button" disabled>Стоп</button>
+      </div>
+      <div class="bar"><span id="bar"></span></div>
+      <p id="message" class="hint"></p>
+      <p id="error" class="err" hidden></p>
+    </section>
+    <section id="recBox" class="rec-box">
+      <h2>Запись референса</h2>
+      <p class="hint">«Записать» включает микрофон. «Остановить» сохраняет wav в F:\LocalAI\Speech и выбирает его референсом для MOSS.</p>
+      <div class="rec-bar">
+        <button id="recBtn" class="rec" type="button">Записать</button>
+        <span id="recDot" class="rec-dot" hidden></span>
+        <span id="recTime" class="rec-time">00:00</span>
+        <span id="recState" class="rec-state">микрофон выключен</span>
+      </div>
+    </section>
+    <section>
+      <h2>Библиотека</h2>
+      <p class="hint">Папки внутри F:\LocalAI\Speech. Новый файл появляется в корне и сразу выделяется, плеер сам не стартует. Клик по строке — взять референсом для клона. Клик по имени — плеер в этой строке, двойной — переименовать. Файл двигайте за ⋮⋮.</p>
+      <div id="playerHold" hidden><audio id="player" controls></audio></div>
+      <div class="lib-head">
+        <button type="button" id="libUp">↑ Наверх</button>
+        <nav class="crumbs" id="libCrumbs"></nav>
+        <button type="button" id="libMkdir">Новая папка</button>
+      </div>
+      <p class="lib-path" id="libPath"></p>
+      <div class="lib-cols" id="libCols"></div>
+      <div class="lib-list" id="libList"></div>
+    </section>
+  </main>
+  <div id="toast" class="toast"></div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const samples = {
+      ru: "Протяжный рог на арене стих. Это проверка локального голоса.",
+      en: "The horn over the arena fades. This is a local voice test."
+    };
+    let catalog = { engines: [] };
+    let poll = null;
+    let lastPhase = "";
+    let libPath = "";
+    let libData = null;
+    let libSource = null;
+    let libSort = { key: "name", dir: "asc" };
+    let playingPath = null;
+    let freshPath = null;
+    let showFreshPlayer = false;
+    let scrollFresh = false;
+    let libRename = null;
+    let playTimer = null;
+
+    function engineSpec() {
+      return catalog.engines.find((item) => item.id === $("engine").value) || catalog.engines[0];
+    }
+
+    function fillEngines() {
+      const select = $("engine");
+      const current = select.value;
+      select.innerHTML = "";
+      catalog.engines.forEach((item) => {
+        const option = document.createElement("option");
+        option.value = item.id;
+        option.textContent = item.name + (item.ready ? "" : " — веса скачаются");
+        select.appendChild(option);
+      });
+      if (current) select.value = current;
+    }
+
+    function fillVoices() {
+      const spec = engineSpec();
+      if (!spec) return;
+      const lang = $("lang");
+      const allowed = new Set(spec.langs || ["ru"]);
+      [...lang.options].forEach((option) => {
+        option.disabled = !allowed.has(option.value);
+      });
+      if (!allowed.has(lang.value)) lang.value = spec.langs[0];
+      const voice = $("voice");
+      const previous = voice.value;
+      voice.innerHTML = "";
+      (spec.voices || []).filter((item) => item.lang === lang.value).forEach((item) => {
+        const option = document.createElement("option");
+        option.value = item.id;
+        option.textContent = item.label || item.id;
+        voice.appendChild(option);
+      });
+      if ([...voice.options].some((option) => option.value === previous)) voice.value = previous;
+      else if (voice.options.length) voice.selectedIndex = 0;
+      $("modelHint").textContent = spec.hint || "";
+      $("refWrap").hidden = !spec.clone;
+      syncSourceChip();
+      $("samples").innerHTML = "";
+      (spec.langs || []).forEach((code) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "chip";
+        button.textContent = code === "ru" ? "Пример RU" : "Sample EN";
+        button.onclick = () => {
+          lang.value = code;
+          $("text").value = samples[code];
+          fillVoices();
+        };
+        $("samples").appendChild(button);
+      });
+    }
+
+    function render(state) {
+      const busy = !!state.busy;
+      $("statusBadge").textContent = busy ? (state.message || "синтез") : (state.phase === "error" ? "ошибка" : "готово");
+      $("statusBadge").className = "badge " + (busy ? "busy" : (state.phase === "error" ? "" : "ok"));
+      $("bar").style.width = (state.progress || 0) + "%";
+      $("message").textContent = state.message || "";
+      $("error").hidden = !state.error;
+      $("error").textContent = state.error || "";
+      $("goBtn").disabled = busy;
+      $("stopBtn").disabled = !busy;
+      $("engine").disabled = busy;
+      if (!mic || !mic.running) $("recBtn").disabled = busy;
+      if (lastPhase && lastPhase !== state.phase && state.phase === "done") {
+        toast("Голос готов");
+        if (state.result_rel) {
+          freshPath = state.result_rel;
+          showFreshPlayer = true;
+          scrollFresh = true;
+          const slash = freshPath.lastIndexOf("/");
+          loadLibrary(slash >= 0 ? freshPath.slice(0, slash) : "");
+        } else {
+          loadLibrary(libPath);
+        }
+      }
+      if (lastPhase && lastPhase !== state.phase && state.phase === "error") {
+        toast(state.error || "Ошибка", true);
+      }
+      lastPhase = state.phase || "";
+      if (busy) ensurePoll(); else stopPoll();
+    }
+
+    function toast(text, err) {
+      const el = $("toast");
+      el.textContent = text;
+      el.className = "toast show" + (err ? " err" : "");
+      setTimeout(() => el.classList.remove("show"), 4500);
+    }
+
+    function syncSourceChip() {
+      const chip = $("sourceChip");
+      if (!chip) return;
+      const on = !!libSource;
+      chip.hidden = !on;
+      $("sourceName").textContent = on ? libSource.name : "";
+    }
+
+    function markSelectedRows() {
+      document.querySelectorAll(".lib-row.file").forEach((el) => {
+        el.classList.toggle("selected", !!(libSource && el.dataset.path === libSource.path));
+      });
+    }
+
+    function clearSource() {
+      libSource = null;
+      syncSourceChip();
+      markSelectedRows();
+    }
+
+    function toggleSource(file) {
+      const spec = engineSpec();
+      if (!spec || !spec.clone) {
+        toast("Этот синтезатор не клонирует голос", true);
+        return;
+      }
+      if (libSource && libSource.path === file.path) clearSource();
+      else {
+        libSource = { path: file.path, name: file.name };
+        syncSourceChip();
+        markSelectedRows();
+      }
+    }
+
+    async function api(url, options) {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || response.statusText);
+      return data;
+    }
+
+    async function refresh() {
+      render(await api("/api/speech/status"));
+    }
+
+    function ensurePoll() {
+      if (poll) return;
+      poll = setInterval(() => refresh().catch(() => {}), 1000);
+    }
+
+    function stopPoll() {
+      if (!poll) return;
+      clearInterval(poll);
+      poll = null;
+    }
+
+    $("engine").onchange = fillVoices;
+    $("lang").onchange = () => {
+      const code = $("lang").value;
+      if (!$("text").value.trim() || Object.values(samples).includes($("text").value.trim())) {
+        $("text").value = samples[code] || samples.ru;
+      }
+      fillVoices();
+    };
+    $("goBtn").onclick = async () => {
+      const body = new FormData();
+      body.set("engine", $("engine").value);
+      body.set("lang", $("lang").value);
+      body.set("voice", $("voice").value);
+      body.set("text", $("text").value);
+      const file = $("reference").files && $("reference").files[0];
+      if (file) body.set("reference", file);
+      else if (libSource && engineSpec() && engineSpec().clone) body.set("library_ref", libSource.path);
+      try {
+        render(await api("/api/speech/start", { method: "POST", body }));
+      } catch (err) {
+        $("error").hidden = false;
+        $("error").textContent = err.message;
+      }
+    };
+    $("stopBtn").onclick = async () => {
+      try { render(await api("/api/speech/stop", { method: "POST" })); }
+      catch (err) {
+        $("error").hidden = false;
+        $("error").textContent = err.message;
+      }
+    };
+
+    let mic = null;
+
+    function encodeWav(chunks, sampleRate) {
+      let length = 0;
+      chunks.forEach((chunk) => { length += chunk.length; });
+      const pcm = new Float32Array(length);
+      let offset = 0;
+      chunks.forEach((chunk) => {
+        pcm.set(chunk, offset);
+        offset += chunk.length;
+      });
+      const buffer = new ArrayBuffer(44 + pcm.length * 2);
+      const view = new DataView(buffer);
+      const write = (pos, text) => { for (let i = 0; i < text.length; i++) view.setUint8(pos + i, text.charCodeAt(i)); };
+      write(0, "RIFF");
+      view.setUint32(4, 36 + pcm.length * 2, true);
+      write(8, "WAVE");
+      write(12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      write(36, "data");
+      view.setUint32(40, pcm.length * 2, true);
+      let pos = 44;
+      for (let i = 0; i < pcm.length; i++, pos += 2) {
+        const s = Math.max(-1, Math.min(1, pcm[i]));
+        view.setInt16(pos, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      }
+      return new Blob([buffer], { type: "audio/wav" });
+    }
+
+    function fmtClock(total) {
+      const sec = Math.max(0, Math.floor(total));
+      const h = Math.floor(sec / 3600);
+      const m = String(Math.floor((sec % 3600) / 60)).padStart(2, "0");
+      const s = String(sec % 60).padStart(2, "0");
+      return h ? h + ":" + m + ":" + s : m + ":" + s;
+    }
+
+    function setRecFace(mode) {
+      const live = mode === "live";
+      $("recBox").classList.toggle("live", live);
+      $("recDot").hidden = !live;
+      $("recBtn").classList.toggle("live", live);
+      if (mode === "live") {
+        $("recBtn").textContent = "Остановить";
+        $("recBtn").disabled = false;
+        $("recState").textContent = "идёт запись";
+      } else if (mode === "save") {
+        $("recBtn").textContent = "Сохраняю…";
+        $("recBtn").disabled = true;
+        $("recState").textContent = "сохраняю wav в библиотеку";
+      } else {
+        $("recBtn").textContent = "Записать";
+        $("recBtn").disabled = false;
+        if (mode !== "done") $("recState").textContent = "микрофон выключен";
+      }
+    }
+
+    function recClock() {
+      if (!mic || !mic.started) return;
+      $("recTime").textContent = fmtClock((Date.now() - mic.started) / 1000);
+    }
+
+    async function stopMic() {
+      const session = mic;
+      if (!session || !session.running) return;
+      session.running = false;
+      clearInterval(session.timer);
+      const elapsed = (Date.now() - session.started) / 1000;
+      $("recTime").textContent = fmtClock(elapsed);
+      setRecFace("save");
+      try { session.processor.disconnect(); } catch (e) {}
+      try { session.source.disconnect(); } catch (e) {}
+      try { session.mute.disconnect(); } catch (e) {}
+      session.stream.getTracks().forEach((track) => track.stop());
+      const sampleRate = session.ctx.sampleRate;
+      const blob = encodeWav(session.chunks, sampleRate);
+      try { await session.ctx.close(); } catch (e) {}
+      mic = null;
+      if (blob.size < 1000) {
+        $("recTime").textContent = "00:00";
+        setRecFace("idle");
+        toast("Запись слишком короткая", true);
+        return;
+      }
+      const body = new FormData();
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      body.set("file", blob, "mic-" + stamp + ".wav");
+      try {
+        const data = await api("/api/speech/library/record", { method: "POST", body });
+        libSource = { path: data.saved, name: data.name };
+        freshPath = data.saved;
+        showFreshPlayer = true;
+        scrollFresh = true;
+        syncSourceChip();
+        renderLibrary(data);
+        $("recTime").textContent = fmtClock(data.audio_sec || elapsed);
+        $("recState").textContent = "сохранено: " + data.name + " · выбрано референсом";
+        setRecFace("done");
+        toast("Запись сохранена и выбрана референсом");
+      } catch (err) {
+        toast(err.message, true);
+        $("recTime").textContent = "00:00";
+        setRecFace("idle");
+      }
+    }
+
+    async function startMic() {
+      if (mic && mic.running) return;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        toast("Браузер не даёт микрофон", true);
+        return;
+      }
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true },
+        });
+      } catch (err) {
+        toast("Нет доступа к микрофону", true);
+        return;
+      }
+      const ctx = new AudioContext();
+      if (ctx.state === "suspended") await ctx.resume();
+      const source = ctx.createMediaStreamSource(stream);
+      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      const mute = ctx.createGain();
+      mute.gain.value = 0;
+      const session = {
+        running: true,
+        started: Date.now(),
+        chunks: [],
+        stream, ctx, source, processor, mute,
+        timer: null,
+      };
+      processor.onaudioprocess = (event) => {
+        if (!session.running) return;
+        const channel = event.inputBuffer.getChannelData(0);
+        session.chunks.push(new Float32Array(channel));
+      };
+      source.connect(processor);
+      processor.connect(mute);
+      mute.connect(ctx.destination);
+      session.timer = setInterval(recClock, 250);
+      mic = session;
+      $("recTime").textContent = "00:00";
+      setRecFace("live");
+    }
+
+    $("recBtn").onclick = () => {
+      if (mic && mic.running) stopMic();
+      else startMic();
+    };
+
+    function fmtSize(n) {
+      if (n < 1024) return n + " Б";
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " КБ";
+      return (n / (1024 * 1024)).toFixed(1) + " МБ";
+    }
+    function splitFileName(name) {
+      const i = (name || "").lastIndexOf(".");
+      if (i <= 0) return { stem: name || "", ext: "" };
+      return { stem: name.slice(0, i), ext: name.slice(i) };
+    }
+    function cancelRename() {
+      if (!libRename) return;
+      const restore = libRename.restore;
+      libRename = null;
+      restore();
+    }
+    function startRename(nameEl, f) {
+      if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+      cancelRename();
+      const { stem, ext } = splitFileName(f.name);
+      const wrap = document.createElement("span");
+      wrap.className = "lib-name-edit";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = stem;
+      input.spellcheck = false;
+      input.setAttribute("aria-label", "Имя файла");
+      const extEl = document.createElement("span");
+      extEl.className = "lib-ext";
+      extEl.textContent = ext;
+      wrap.append(input, extEl);
+      const restore = () => { if (wrap.parentNode) wrap.replaceWith(nameEl); };
+      libRename = { wrap, restore };
+      nameEl.replaceWith(wrap);
+      input.focus();
+      input.select();
+      const stop = (e) => e.stopPropagation();
+      wrap.addEventListener("click", stop);
+      wrap.addEventListener("dblclick", stop);
+      wrap.addEventListener("mousedown", stop);
+      input.addEventListener("keydown", async (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          cancelRename();
+          return;
+        }
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        const next = input.value.trim();
+        if (!next || next === stem) {
+          cancelRename();
+          return;
+        }
+        releasePlayer(f.path);
+        try {
+          const data = await retryLocked(() => api("/api/speech/library/rename", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ src: f.path, name: next, cwd: libPath }),
+          }));
+          const slash = f.path.lastIndexOf("/");
+          const newPath = (slash >= 0 ? f.path.slice(0, slash + 1) : "") + next + ext;
+          if (libSource && libSource.path === f.path) libSource = { path: newPath, name: next + ext };
+          if (freshPath === f.path) freshPath = newPath;
+          libRename = null;
+          renderLibrary(data);
+          syncSourceChip();
+          toast("Файл переименован");
+        } catch (err) {
+          toast(err.message, true);
+          cancelRename();
+        }
+      });
+    }
+    document.addEventListener("mousedown", (e) => {
+      if (!libRename) return;
+      if (libRename.wrap.contains(e.target)) return;
+      cancelRename();
+    });
+    function bindDrop(el, destPath) {
+      el.addEventListener("dragover", (e) => {
+        if (![...e.dataTransfer.types].includes("text/plain")) return;
+        e.preventDefault();
+        el.classList.add("drop");
+      });
+      el.addEventListener("dragleave", () => el.classList.remove("drop"));
+      el.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        el.classList.remove("drop");
+        const src = e.dataTransfer.getData("text/plain");
+        let dest = destPath;
+        if (destPath === "__parent__") {
+          if (!libData || libData.parent == null) return;
+          dest = libData.parent;
+        }
+        if (!src || src === dest) return;
+        try {
+          libData = await api("/api/speech/library/move", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ src, dest: dest || "", cwd: libPath }),
+          });
+          renderLibrary(libData);
+          toast("Файл перемещён");
+        } catch (err) { toast(err.message, true); }
+      });
+    }
+    function fmtDate(ts) {
+      if (ts == null || ts === "") return "—";
+      const d = new Date(Number(ts) * 1000);
+      if (Number.isNaN(d.getTime())) return "—";
+      const p = (n) => String(n).padStart(2, "0");
+      return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+    function sortItems(items) {
+      const { key, dir } = libSort;
+      const mul = dir === "desc" ? -1 : 1;
+      return items.slice().sort((a, b) => {
+        let av;
+        let bv;
+        if (key === "name") {
+          av = (a.name || "").toLowerCase();
+          bv = (b.name || "").toLowerCase();
+          return av < bv ? -mul : av > bv ? mul : 0;
+        }
+        av = Number(a[key] || 0);
+        bv = Number(b[key] || 0);
+        if (av === bv) {
+          const an = (a.name || "").toLowerCase();
+          const bn = (b.name || "").toLowerCase();
+          return an < bn ? -1 : an > bn ? 1 : 0;
+        }
+        return (av - bv) * mul;
+      });
+    }
+    function renderLibCols() {
+      const cols = $("libCols");
+      const labels = [
+        ["name", "Имя"],
+        ["ctime", "Создан"],
+        ["mtime", "Изменён"],
+        ["size", "Размер"],
+      ];
+      cols.innerHTML = "<span></span><span></span>" + labels.map(([key, label]) => {
+        const on = libSort.key === key;
+        const mark = on ? (libSort.dir === "desc" ? " ↓" : " ↑") : "";
+        return `<button type="button" data-sort="${key}" class="${on ? "active" : ""}">${label}${mark}</button>`;
+      }).join("") + "<span></span>";
+      cols.querySelectorAll("[data-sort]").forEach((btn) => {
+        btn.onclick = () => {
+          const key = btn.dataset.sort;
+          if (libSort.key === key) libSort.dir = libSort.dir === "asc" ? "desc" : "asc";
+          else {
+            libSort.key = key;
+            libSort.dir = key === "name" ? "asc" : "desc";
+          }
+          if (libData) renderLibrary(libData);
+        };
+      });
+    }
+    function parkPlayer() {
+      const player = $("player");
+      const hold = $("playerHold");
+      if (player && hold && player.parentElement !== hold) hold.appendChild(player);
+    }
+    async function retryLocked(run) {
+      let lastErr = null;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        try {
+          return await run();
+        } catch (err) {
+          lastErr = err;
+          const msg = String(err && err.message || "");
+          const locked = /WinError 32|занят другим процессом|being used by another process/i.test(msg);
+          if (!locked || attempt === 11) throw lastErr;
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      }
+      throw lastErr;
+    }
+    function releasePlayer(path) {
+      const player = $("player");
+      if (!player) return;
+      const current = player.getAttribute("data-path");
+      if (path && current && current !== path) return;
+      player.pause();
+      player.removeAttribute("src");
+      player.removeAttribute("data-src");
+      player.removeAttribute("data-path");
+      player.load();
+      player.hidden = true;
+      playingPath = null;
+      parkPlayer();
+    }
+    function mountPlayer(row, path, autoplay, keep) {
+      const player = $("player");
+      const same = player.getAttribute("data-path") === path && !!player.src;
+      row.appendChild(player);
+      player.hidden = false;
+      if (!same) {
+        player.pause();
+        const src = "/api/speech/file?path=" + encodeURIComponent(path);
+        player.src = src;
+        player.setAttribute("data-path", path);
+        player.setAttribute("data-src", src);
+      }
+      playingPath = path;
+      if (autoplay) player.play().catch(() => {});
+      else if (!keep) player.pause();
+    }
+    function renderLibrary(data) {
+      cancelRename();
+      parkPlayer();
+      libData = data;
+      libPath = data.path || "";
+      $("libPath").textContent = data.root + (libPath ? "\\" + libPath.replaceAll("/", "\\") : "");
+      $("libUp").disabled = !libPath;
+      const crumbs = $("libCrumbs");
+      crumbs.innerHTML = "";
+      (data.crumbs || []).forEach((c, i) => {
+        if (i) {
+          const sep = document.createElement("span");
+          sep.className = "crumb-sep";
+          sep.textContent = "/";
+          crumbs.appendChild(sep);
+        }
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "crumb";
+        b.textContent = c.name;
+        b.onclick = () => loadLibrary(c.path);
+        bindDrop(b, c.path);
+        crumbs.appendChild(b);
+      });
+      renderLibCols();
+      const list = $("libList");
+      list.innerHTML = "";
+      const dirs = sortItems(data.dirs || []);
+      const files = sortItems(data.files || []);
+      if (!dirs.length && !files.length) {
+        const empty = document.createElement("div");
+        empty.className = "lib-empty";
+        empty.textContent = "Папка пустая — сюда попадают новые записи, если вы в корне, или перетащите файл из другого раздела.";
+        list.appendChild(empty);
+        return;
+      }
+      dirs.forEach((d) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "lib-row dir";
+        const spacer = document.createElement("span");
+        const ico = document.createElement("span");
+        ico.className = "ico";
+        ico.textContent = "📁";
+        const name = document.createElement("span");
+        name.className = "lib-name";
+        name.textContent = d.name;
+        const created = document.createElement("span");
+        created.className = "lib-date";
+        created.textContent = fmtDate(d.ctime);
+        const changed = document.createElement("span");
+        changed.className = "lib-date";
+        changed.textContent = fmtDate(d.mtime);
+        const meta = document.createElement("span");
+        meta.className = "lib-meta";
+        meta.textContent = "папка";
+        row.append(spacer, ico, name, created, changed, meta, document.createElement("span"));
+        row.onclick = () => loadLibrary(d.path);
+        bindDrop(row, d.path);
+        list.appendChild(row);
+      });
+      files.forEach((f) => {
+        const row = document.createElement("div");
+        row.className = "lib-row file" + (libSource && libSource.path === f.path ? " selected" : "");
+        row.dataset.path = f.path;
+        row.setAttribute("role", "group");
+        row.title = "Клик по строке — взять референсом для клона";
+        if (freshPath && f.path === freshPath) row.classList.add("fresh");
+        row.onclick = (e) => {
+          if (e.target.closest(".grip, .lib-name, .lib-name-edit, .lib-del, audio")) return;
+          toggleSource(f);
+        };
+        const grip = document.createElement("span");
+        grip.className = "grip";
+        grip.draggable = true;
+        grip.title = "Перетащить в папку";
+        grip.textContent = "⋮⋮";
+        grip.addEventListener("dragstart", (e) => {
+          e.dataTransfer.setData("text/plain", f.path);
+          e.dataTransfer.effectAllowed = "move";
+        });
+        const ico = document.createElement("span");
+        ico.className = "ico";
+        ico.textContent = "🔊";
+        const name = document.createElement("span");
+        name.className = "lib-name";
+        name.textContent = f.name;
+        name.setAttribute("role", "button");
+        name.tabIndex = 0;
+        name.title = "Клик — слушать, двойной клик — переименовать";
+        name.style.cursor = "pointer";
+        name.onclick = (e) => {
+          if (e.detail > 1) return;
+          if (playTimer) clearTimeout(playTimer);
+          playTimer = setTimeout(() => {
+            playTimer = null;
+            mountPlayer(row, f.path, true, false);
+          }, 280);
+        };
+        name.ondblclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          startRename(name, f);
+        };
+        const created = document.createElement("span");
+        created.className = "lib-date";
+        created.textContent = fmtDate(f.ctime);
+        const changed = document.createElement("span");
+        changed.className = "lib-date";
+        changed.textContent = fmtDate(f.mtime);
+        const meta = document.createElement("span");
+        meta.className = "lib-meta";
+        meta.textContent = fmtSize(f.size || 0);
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "lib-del";
+        del.textContent = "Удалить";
+        del.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          releasePlayer(f.path);
+          try {
+            const data = await retryLocked(() => api("/api/speech/library/delete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ src: f.path, cwd: libPath }),
+            }));
+            if (libSource && libSource.path === f.path) clearSource();
+            if (freshPath === f.path) freshPath = null;
+            renderLibrary(data);
+          } catch (err) {
+            toast(err.message, true);
+          }
+        };
+        row.append(grip, ico, name, created, changed, meta, del);
+        list.appendChild(row);
+      });
+      const fileRows = () => [...list.querySelectorAll(".lib-row.file")];
+      if (freshPath && showFreshPlayer) {
+        const freshRow = fileRows().find((el) => el.dataset.path === freshPath);
+        if (freshRow) {
+          freshRow.classList.add("fresh");
+          mountPlayer(freshRow, freshPath, false, false);
+          if (scrollFresh) freshRow.scrollIntoView({ block: "nearest" });
+        }
+        showFreshPlayer = false;
+        scrollFresh = false;
+      } else if (playingPath) {
+        const playingRow = fileRows().find((el) => el.dataset.path === playingPath);
+        if (playingRow) mountPlayer(playingRow, playingPath, false, true);
+      }
+    }
+    async function loadLibrary(path) {
+      try {
+        renderLibrary(await api("/api/speech/library?path=" + encodeURIComponent(path || "")));
+      } catch (e) { toast(e.message, true); }
+    }
+    $("libUp").onclick = () => {
+      if (!libData || libData.parent == null) return;
+      loadLibrary(libData.parent);
+    };
+    bindDrop($("libUp"), "__parent__");
+    $("libMkdir").onclick = async () => {
+      const name = window.prompt("Имя папки");
+      if (!name) return;
+      try {
+        renderLibrary(await api("/api/speech/library/mkdir", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: libPath, name }),
+        }));
+      } catch (e) { toast(e.message, true); }
+    };
+    $("sourceClear").onclick = () => clearSource();
+
+    api("/api/speech/catalog").then((data) => {
+      catalog = data;
+      fillEngines();
+      fillVoices();
+    }).catch((err) => {
+      $("error").hidden = false;
+      $("error").textContent = err.message;
+    });
+    Promise.all([refresh(), loadLibrary("")]).catch(() => {});
+  </script>
+</body>
+</html>

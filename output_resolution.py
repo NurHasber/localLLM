@@ -44,11 +44,6 @@ def pipeline_dimensions(
     """Return (height, width) for diffusers at source size (aligned to model grid)."""
     w, h = max(1, int(width)), max(1, int(height))
 
-    if "FluxKontext" in pipe_class_name:
-        multiple = vae_scale_factor * 2
-        w, h = align_dimensions(w, h, multiple)
-        return h, w
-
     if "Qwen" in pipe_class_name:
         w, h = align_dimensions(w, h, 32)
         return h, w

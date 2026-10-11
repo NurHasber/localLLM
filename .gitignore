@@ -2,4 +2,16 @@
 __pycache__/
 *.pyc
 logs/
+outputs/
+.cache/
 models/
+vendor/MOSS-TTS-Nano/models/
+vendor/CosyVoice/pretrained_models/
+vendor/CosyVoice/outputs/
+vendor/MOSS-TTS-Nano/generated_audio/
+vendor/ACE-Step-1.5/checkpoints/
+vendor/ACE-Step-1.5/.cache/
+loras/*.safetensors
+training/qwen-edit-lora/output/
+tools/ai-toolkit/
+

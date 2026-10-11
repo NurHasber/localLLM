@@ -26,12 +26,13 @@ set PHOTO_EDIT_PORT=7860
 set PHOTO_EDIT_LOG=photo-edit.log
 
 echo.
-echo === Photo Edit ===
+echo === Photone ===
 echo Root: %~dp0
 echo Open: http://127.0.0.1:7860
 echo Log:  logs\photo-edit.log
 echo Models cache: models\huggingface
 echo.
+echo Console debug. For tray without cmd: start-tray.bat
 echo Do not restart during generation.
 echo.
 

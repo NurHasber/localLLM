@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Queue-only web server for local photo editing."""
+"""Photone web server: photo queue, T2I, music."""
 
 from __future__ import annotations
 
 import io
 import os
+import sys
 import threading
 from pathlib import Path
+from urllib.parse import quote
 
 import portable_env  # noqa: F401 — sets HF cache under project root
 
@@ -14,6 +16,7 @@ os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 import uvicorn
+from brand import APP_NAME
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -22,29 +25,73 @@ from pydantic import BaseModel
 from gpu_supervisor import run_gpu_subprocess
 from image_editor import (
     MODELS,
+    QWEN_EDIT_IDS,
     abort_generation,
     build_joycaption_prompt,
     edit_image,
     get_gpu_info,
     inference_steps_for_model,
     is_test_model,
+    list_loras,
     list_models,
+    list_t2i_models,
     release_gpu_vram,
+    resolve_gpu_chain_model,
+    resolve_lora_path,
     uses_joycaption_flow,
 )
 from job_errors import JobCancelled, JobPaused
 from job_logger import get_logger, log_job, log_job_exception, log_generation_error, log_line, open_log_in_system_editor
 from job_store import JOBS, MAX_REFERENCE_IMAGES, TERMINAL_STATUSES
 from output_resolution import image_dimensions_label
+from photo_sort import (
+    SORT,
+    begin_scan,
+    request_cancel,
+    request_pause,
+    run_cluster,
+    start_caption,
+    start_copy,
+)
+from music import (
+    MUSIC,
+    create_library_folder,
+    library_file_bytes,
+    list_library,
+    move_library_item,
+    rename_library_file,
+    delete_library_file,
+    request_music_cancel,
+    result_bytes as music_result_bytes,
+    start_music,
+    stats_boards,
+)
+from speech import (
+    SPEECH_ROOT,
+    catalog as speech_catalog,
+    create_speech_folder,
+    delete_speech_file,
+    list_speech_library,
+    move_speech_item,
+    rename_speech_file,
+    request_speech_cancel,
+    resolve_speech_library_path,
+    result_file as speech_result_file,
+    save_speech_recording,
+    speech_file_bytes,
+    start_speech,
+    SPEECH,
+)
+from t2i import T2I, T2I_ASPECTS, request_t2i_cancel, start_t2i
 from pipeline_progress import PHASE_TOTAL, PipelineProgress
-from prompt_helper import QWEN_MODEL_IDS, format_for_flux, format_for_qwen, ollama_available, prompt_is_english
+from prompt_helper import format_for_qwen, ollama_available, prepare_music_fields, prompt_is_english
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
 
 SERVER_PORT = int(os.environ.get("PHOTO_EDIT_PORT", "7860"))
 
-app = FastAPI(title="Photo Edit")
+app = FastAPI(title=APP_NAME)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 _queue_runner_lock = threading.Lock()
@@ -52,6 +99,64 @@ _queue_runner_lock = threading.Lock()
 
 class QueueReorderBody(BaseModel):
     order: list[str]
+
+
+class SortScanBody(BaseModel):
+    folder: str
+    recursive: bool = False
+
+
+class SortApplyBody(BaseModel):
+    dest: str | None = None
+
+
+class T2IStartBody(BaseModel):
+    prompt: str
+    aspect: str = "1:1"
+    steps: int = 50
+    model_id: str = "qwen-image-2512"
+
+
+class MusicStartBody(BaseModel):
+    style: str
+    lyrics: str = ""
+    cot: str = "off"
+    seed: int = 42
+    model_id: str = "yue2-3b"
+    duration_sec: float | None = None
+    source_path: str = ""
+    edit: str = ""
+    lang: str = "en"
+
+
+class MusicPrepareBody(BaseModel):
+    style: str
+    lyrics: str = ""
+    model_id: str = "yue2-3b"
+    edit: str = ""
+    lang: str = "en"
+
+
+class MusicLibraryMkdirBody(BaseModel):
+    path: str = ""
+    name: str
+
+
+class MusicLibraryMoveBody(BaseModel):
+    src: str
+    dest: str = ""
+    cwd: str = ""
+
+
+class MusicLibraryRenameBody(BaseModel):
+    src: str
+    name: str
+    cwd: str = ""
+
+
+class MusicLibraryDeleteBody(BaseModel):
+    src: str
+    cwd: str = ""
 
 
 def _install_quiet_thread_interrupts() -> None:
@@ -175,7 +280,7 @@ def _run_prep_job(
                 message="1. Промпт на английском — JoyCaption пропущен",
             )
             pipeline.report("translate", 0.0, detail="промпт на английском")
-            prompt_used = format_for_qwen(prompt) if model_id in QWEN_MODEL_IDS else format_for_flux(prompt)
+            prompt_used = format_for_qwen(prompt)
             preview = prompt if len(prompt) <= 160 else prompt[:157] + "..."
             JOBS.log_activity(job_id, f"Промпт: {preview}")
             JOBS.update(job_id, prompt_used=prompt_used, prompt_translation=prompt.strip(), note=None)
@@ -203,7 +308,7 @@ def _run_prep_job(
                 )
                 JOBS.gpu_lock().release()
                 gpu_acquired = False
-            prompt_used = format_for_qwen(joy_raw) if model_id in QWEN_MODEL_IDS else english_prompt
+            prompt_used = format_for_qwen(joy_raw)
             preview = joy_raw if len(joy_raw) <= 160 else joy_raw[:157] + "..."
             JOBS.log_activity(job_id, f"JoyCaption: {preview}")
             JOBS.update(job_id, prompt_used=prompt_used, prompt_translation=joy_raw, note=None)
@@ -219,11 +324,10 @@ def _run_prep_job(
                 pipeline.report("translate", 0.95, detail="фото-примеры без JoyCaption")
                 job = JOBS.get(job_id)
                 prompt_used = (job.prompt_used if job else "") or ""
-                if model_id in QWEN_MODEL_IDS:
-                    from image_editor import augment_prompt_for_qwen_reference
+                from image_editor import augment_prompt_for_qwen_reference
 
-                    prompt_used = augment_prompt_for_qwen_reference(prompt_used, n)
-                    JOBS.update(job_id, prompt_used=prompt_used)
+                prompt_used = augment_prompt_for_qwen_reference(prompt_used, n)
+                JOBS.update(job_id, prompt_used=prompt_used)
             else:
                 from image_editor import augment_prompt_for_qwen_reference, describe_reference_for_prompt
 
@@ -249,8 +353,7 @@ def _run_prep_job(
                     prompt_used = f"{prompt_used.rstrip('.')}. Reference example photos: " + " ".join(
                         descriptions
                     )
-                if model_id in QWEN_MODEL_IDS:
-                    prompt_used = augment_prompt_for_qwen_reference(prompt_used, len(refs))
+                prompt_used = augment_prompt_for_qwen_reference(prompt_used, len(refs))
                 JOBS.update(job_id, prompt_used=prompt_used)
 
         if cancel_checker():
@@ -306,10 +409,10 @@ def _run_gpu_job(job_id: str, raw: bytes, model_id: str, reference_list: list[by
 
     effective_id = model_id
     if uses_joycaption_flow(model_id) and not is_test_model(model_id):
-        effective_id = MODELS["joycaption"].chain_to or "flux-kontext"
+        effective_id = MODELS["joycaption"].chain_to or "qwen36-hauhau"
     effective_name = MODELS[effective_id].name if effective_id in MODELS else effective_id
 
-    if refs and model_id in QWEN_MODEL_IDS:
+    if refs and resolve_gpu_chain_model(model_id) in QWEN_EDIT_IDS:
         from image_editor import augment_prompt_for_qwen_reference
 
         english_prompt = augment_prompt_for_qwen_reference(english_prompt, len(refs))
@@ -331,10 +434,11 @@ def _run_gpu_job(job_id: str, raw: bytes, model_id: str, reference_list: list[by
                 pipeline=pipeline,
                 cancel_checker=cancel_checker,
                 pause_checker=lambda: JOBS.should_pause(job_id),
-                flux_prompt=english_prompt if uses_joycaption_flow(model_id) else None,
+                approved_prompt=english_prompt if uses_joycaption_flow(model_id) else None,
                 job_id=job_id,
                 resume_job_id=job_id if _has_resume_checkpoint(job_id) else None,
                 reference_images_bytes=refs or None,
+                lora_path=resolve_lora_path(job.lora_id) if job and job.lora_id else None,
             )
         else:
             JOBS.gpu_lock().acquire()
@@ -347,7 +451,7 @@ def _run_gpu_job(job_id: str, raw: bytes, model_id: str, reference_list: list[by
                 raw,
                 model_id,
                 english_prompt,
-                flux_prompt=english_prompt if uses_joycaption_flow(model_id) else None,
+                approved_prompt=english_prompt if uses_joycaption_flow(model_id) else None,
                 pipeline=pipeline,
                 cancel_checker=cancel_checker,
                 pause_checker=lambda: JOBS.should_pause(job_id),
@@ -355,6 +459,7 @@ def _run_gpu_job(job_id: str, raw: bytes, model_id: str, reference_list: list[by
                 resume=_has_resume_checkpoint(job_id),
                 inference_steps=inference_steps,
                 reference_raw=refs or None,
+                lora_id=(job.lora_id if job else "") or "",
             )
         if cancel_checker():
             raise JobCancelled()
@@ -525,15 +630,59 @@ def _job_reference(job, index: int = 0):
 
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon() -> FileResponse:
+    ico = STATIC / "favicon.ico"
+    if ico.exists():
+        return FileResponse(ico, media_type="image/x-icon")
     return FileResponse(STATIC / "favicon.svg", media_type="image/svg+xml")
+
+
+@app.get("/offline", response_class=HTMLResponse)
+def offline_page() -> HTMLResponse:
+    return HTMLResponse(
+        (STATIC / "offline.html").read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker() -> Response:
+    return Response(
+        content=(STATIC / "sw.js").read_text(encoding="utf-8"),
+        media_type="application/javascript; charset=utf-8",
+        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+    )
+
+
+def _html_page(name: str) -> HTMLResponse:
+    return HTMLResponse(
+        (STATIC / name).read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
-    return HTMLResponse(
-        (STATIC / "app.html").read_text(encoding="utf-8"),
-        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
-    )
+    return _html_page("app.html")
+
+
+@app.get("/sort", response_class=HTMLResponse)
+def sort_page() -> HTMLResponse:
+    return _html_page("sort.html")
+
+
+@app.get("/generate", response_class=HTMLResponse)
+def generate_page() -> HTMLResponse:
+    return _html_page("generate.html")
+
+
+@app.get("/music", response_class=HTMLResponse)
+def music_page() -> HTMLResponse:
+    return _html_page("music.html")
+
+
+@app.get("/speech", response_class=HTMLResponse)
+def speech_page() -> HTMLResponse:
+    return _html_page("speech.html")
 
 
 @app.get("/api/models")
@@ -544,6 +693,7 @@ def api_models() -> dict:
         "port": SERVER_PORT,
         "gpu": get_gpu_info(),
         "max_reference_images": MAX_REFERENCE_IMAGES,
+        "loras": list_loras(),
     }
 
 
@@ -561,12 +711,24 @@ def api_status() -> dict:
     active_id = JOBS.active_job_id()
     active_job = JOBS.get(active_id) if active_id else None
     queue = JOBS.queue_snapshot()
+    snap = SORT.snapshot()
+    t2i = T2I.snapshot()
+    music = MUSIC.snapshot()
     payload: dict = {
         "gpu_busy": JOBS.is_gpu_busy(),
         "has_work": queue["has_work"],
         "pending_count": queue["pending_count"],
         "port": SERVER_PORT,
         "gpu": get_gpu_info(),
+        "sort_phase": snap["phase"],
+        "sort_message": snap["message"],
+        "sort_busy": snap["busy"],
+        "sort_elapsed_sec": snap["elapsed_sec"],
+        "sort_work_title": snap["work_title"],
+        "t2i_busy": t2i["busy"],
+        "t2i_message": t2i["message"],
+        "music_busy": music["busy"],
+        "music_message": music["message"],
     }
     if active_job:
         payload["active_job"] = active_job.to_dict()
@@ -671,8 +833,22 @@ async def api_queue_prepare() -> JSONResponse:
     return JSONResponse({"ok": True, "prepared": count, "queue": JOBS.queue_snapshot()})
 
 
+@app.post("/api/queue/skip-prep")
+async def api_queue_skip_prep() -> JSONResponse:
+    count, reason, skipped_ids = JOBS.skip_prep_drafts()
+    if count == 0:
+        raise HTTPException(400, reason)
+    for job_id in skipped_ids:
+        JOBS.log_activity(job_id, "Без подготовки JoyCaption — промпт как есть")
+    return JSONResponse({"ok": True, "skipped": count, "queue": JOBS.queue_snapshot()})
+
+
 @app.post("/api/queue/start-gpu")
-async def api_queue_start_gpu(model: str = Form(""), steps: str = Form("")) -> JSONResponse:
+async def api_queue_start_gpu(
+    model: str = Form(""),
+    steps: str = Form(""),
+    lora: str = Form(""),
+) -> JSONResponse:
     model = model.strip()
     session = JOBS.gpu_session_model()
     if JOBS.gpu_session_active() and session:
@@ -685,13 +861,17 @@ async def api_queue_start_gpu(model: str = Form(""), steps: str = Form("")) -> J
         inference_steps = inference_steps_for_model(
             model, int(steps) if steps.strip() else None
         )
+        lora_id = ""
+        if lora.strip():
+            resolve_lora_path(lora.strip())
+            lora_id = Path(lora.strip()).name
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    count, promoted_ids = JOBS.promote_approved_to_gpu(model, inference_steps)
+    count, promoted_ids = JOBS.promote_approved_to_gpu(model, inference_steps, lora_id=lora_id)
     if count == 0:
         raise HTTPException(400, "Нет подтверждённых промптов")
     for job_id in promoted_ids:
-        JOBS.log_activity(job_id, f"Модель: «{model}», шагов: {inference_steps}")
+        JOBS.log_activity(job_id, f"Модель: «{model}», шагов: {inference_steps}" + (f", LoRA {lora_id}" if lora_id else ""))
     _schedule_gpu()
     return JSONResponse(
         {
@@ -897,14 +1077,503 @@ def api_job_original(job_id: str) -> Response:
     return Response(content=job.image_bytes, media_type=media)
 
 
+def _sort_status_payload() -> dict:
+    snap = SORT.snapshot()
+    snap["gpu_busy"] = JOBS.is_gpu_busy()
+    snap["ollama"] = ollama_available()
+    return snap
+
+
+@app.get("/api/sort/status")
+def api_sort_status() -> dict:
+    return _sort_status_payload()
+
+
+@app.post("/api/sort/scan")
+def api_sort_scan(body: SortScanBody) -> JSONResponse:
+    try:
+        begin_scan(body.folder, body.recursive)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return JSONResponse(_sort_status_payload())
+
+
+@app.post("/api/sort/caption/start")
+def api_sort_caption_start() -> JSONResponse:
+    def acquire() -> None:
+        if not JOBS.gpu_lock().acquire(blocking=False):
+            raise RuntimeError("GPU занят — дождитесь генерации")
+
+    def release() -> None:
+        try:
+            JOBS.gpu_lock().release()
+        except RuntimeError:
+            pass
+
+    try:
+        start_caption(JOBS.is_gpu_busy(), acquire, release)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return JSONResponse(_sort_status_payload())
+
+
+@app.post("/api/sort/caption/pause")
+def api_sort_caption_pause() -> JSONResponse:
+    return JSONResponse(request_pause() | {"gpu_busy": JOBS.is_gpu_busy(), "ollama": ollama_available()})
+
+
+@app.post("/api/sort/caption/stop")
+def api_sort_caption_stop() -> JSONResponse:
+    return JSONResponse(request_cancel() | {"gpu_busy": JOBS.is_gpu_busy(), "ollama": ollama_available()})
+
+
+@app.post("/api/sort/cluster")
+def api_sort_cluster() -> JSONResponse:
+    try:
+        run_cluster()
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return JSONResponse(_sort_status_payload())
+
+
+@app.post("/api/sort/apply")
+def api_sort_apply(body: SortApplyBody) -> JSONResponse:
+    try:
+        start_copy(body.dest)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return JSONResponse(_sort_status_payload())
+
+
+def _t2i_payload() -> dict:
+    snap = T2I.snapshot()
+    snap["gpu_busy"] = JOBS.is_gpu_busy()
+    snap["ollama"] = ollama_available()
+    return snap
+
+
+@app.get("/api/t2i/models")
+def api_t2i_models() -> dict:
+    return {
+        "models": list_t2i_models(),
+        "aspects": {k: {"width": w, "height": h} for k, (w, h) in T2I_ASPECTS.items()},
+        "ollama": ollama_available(),
+        "gpu": get_gpu_info(),
+    }
+
+
+@app.get("/api/t2i/status")
+def api_t2i_status() -> dict:
+    return _t2i_payload()
+
+
+@app.post("/api/t2i/start")
+def api_t2i_start(body: T2IStartBody) -> JSONResponse:
+    def acquire() -> None:
+        if not JOBS.gpu_lock().acquire(blocking=False):
+            raise RuntimeError("GPU занят — дождитесь правки или сортировки")
+
+    def release() -> None:
+        try:
+            JOBS.gpu_lock().release()
+        except RuntimeError:
+            pass
+
+    try:
+        start_t2i(
+            body.prompt,
+            aspect=body.aspect,
+            steps=body.steps,
+            model_id=body.model_id,
+            gpu_busy=JOBS.is_gpu_busy(),
+            acquire_gpu=acquire,
+            release_gpu=release,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return JSONResponse(_t2i_payload())
+
+
+@app.post("/api/t2i/stop")
+def api_t2i_stop() -> JSONResponse:
+    return JSONResponse(request_t2i_cancel() | {"gpu_busy": JOBS.is_gpu_busy(), "ollama": ollama_available()})
+
+
+@app.get("/api/t2i/result")
+def api_t2i_result() -> Response:
+    with T2I._lock:
+        data = T2I.result
+    if not data:
+        raise HTTPException(404, "Результат ещё не готов")
+    return Response(content=data, media_type="image/png")
+
+
+def _music_payload() -> dict:
+    snap = MUSIC.snapshot()
+    snap["gpu_busy"] = JOBS.is_gpu_busy()
+    return snap
+
+
+@app.get("/api/music/status")
+def api_music_status() -> dict:
+    return _music_payload()
+
+
+@app.get("/api/music/stats")
+def api_music_stats() -> dict:
+    return stats_boards()
+
+
+@app.post("/api/music/prepare")
+def api_music_prepare(body: MusicPrepareBody) -> JSONResponse:
+    """RU → EN via Ollama. English fields pass through without calling Ollama."""
+    try:
+        payload = prepare_music_fields(
+            body.style,
+            body.lyrics,
+            sfx=body.model_id == "moss-sfx-v2",
+            edit=body.edit,
+            lang=body.lang,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return JSONResponse(payload)
+
+
+@app.post("/api/music/start")
+def api_music_start(body: MusicStartBody) -> JSONResponse:
+    def acquire() -> None:
+        if not JOBS.gpu_lock().acquire(blocking=False):
+            raise RuntimeError("GPU занят — дождитесь правки, сортировки или картинки")
+
+    def release() -> None:
+        try:
+            JOBS.gpu_lock().release()
+        except RuntimeError:
+            pass
+
+    style, lyrics = body.style, body.lyrics
+    try:
+        source_path = (body.source_path or "").strip()
+        edit = body.edit
+        model_id = "acestep-1.5" if source_path else body.model_id
+        prep = prepare_music_fields(
+            style,
+            lyrics,
+            sfx=model_id == "moss-sfx-v2",
+            edit=edit,
+            lang="en" if model_id == "moss-sfx-v2" else body.lang,
+        )
+        style, lyrics, edit = prep["style"], prep["lyrics"], prep.get("edit") or ""
+        start_music(
+            style=style,
+            lyrics=lyrics,
+            cot=body.cot,
+            seed=body.seed,
+            model_id=model_id,
+            duration_sec=body.duration_sec,
+            source_rel=source_path or None,
+            edit=edit,
+            lang=prep.get("lang") or body.lang,
+            gpu_busy=JOBS.is_gpu_busy(),
+            acquire_gpu=acquire,
+            release_gpu=release,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return JSONResponse(_music_payload())
+
+
+@app.post("/api/music/stop")
+def api_music_stop() -> JSONResponse:
+    return JSONResponse(request_music_cancel() | {"gpu_busy": JOBS.is_gpu_busy()})
+
+
+@app.get("/api/music/result")
+def api_music_result() -> Response:
+    data = music_result_bytes()
+    if not data:
+        raise HTTPException(404, "Результат ещё не готов")
+    return Response(content=data, media_type="audio/flac")
+
+
+@app.get("/api/music/library")
+def api_music_library(path: str = "") -> JSONResponse:
+    try:
+        return JSONResponse(list_library(path))
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/music/library/mkdir")
+def api_music_library_mkdir(body: MusicLibraryMkdirBody) -> JSONResponse:
+    try:
+        return JSONResponse(create_library_folder(body.path, body.name))
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/music/library/move")
+def api_music_library_move(body: MusicLibraryMoveBody) -> JSONResponse:
+    try:
+        return JSONResponse(move_library_item(body.src, body.dest, body.cwd))
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/music/library/rename")
+def api_music_library_rename(body: MusicLibraryRenameBody) -> JSONResponse:
+    try:
+        return JSONResponse(rename_library_file(body.src, body.name, body.cwd))
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/music/library/delete")
+def api_music_library_delete(body: MusicLibraryDeleteBody) -> JSONResponse:
+    try:
+        return JSONResponse(delete_library_file(body.src, body.cwd))
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+def _inline_audio_disposition(name: str) -> str:
+    encoded = quote(name)
+    if encoded == name:
+        return f'inline; filename="{name}"'
+    return f"inline; filename*=UTF-8''{encoded}"
+
+
+@app.get("/api/speech/catalog")
+def api_speech_catalog() -> JSONResponse:
+    return JSONResponse(speech_catalog())
+
+
+@app.get("/api/speech/status")
+def api_speech_status() -> JSONResponse:
+    return JSONResponse(SPEECH.snapshot() | {"gpu_busy": JOBS.is_gpu_busy()})
+
+
+@app.post("/api/speech/start")
+async def api_speech_start(
+    engine: str = Form(...),
+    lang: str = Form("ru"),
+    voice: str = Form(""),
+    text: str = Form(...),
+    reference: UploadFile | None = File(None),
+    library_ref: str = Form(""),
+) -> JSONResponse:
+    ref_path = None
+    if reference is not None and reference.filename:
+        suffix = Path(reference.filename).suffix.lower()
+        if suffix not in {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"}:
+            raise HTTPException(400, "Референс: wav, mp3, flac, ogg или m4a")
+        folder = SPEECH_ROOT / "_refs"
+        folder.mkdir(parents=True, exist_ok=True)
+        ref_path = folder / f"ref{suffix}"
+        ref_path.write_bytes(await reference.read())
+    elif library_ref.strip():
+        try:
+            ref_path = resolve_speech_library_path(library_ref)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not ref_path.is_file() or ref_path.suffix.lower() not in {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"}:
+            raise HTTPException(400, "Референс из библиотеки не найден")
+
+    def acquire() -> None:
+        if not JOBS.gpu_lock().acquire(blocking=False):
+            raise RuntimeError("GPU занят — дождитесь правки, сортировки, картинки или музыки")
+
+    def release() -> None:
+        try:
+            JOBS.gpu_lock().release()
+        except RuntimeError:
+            pass
+
+    try:
+        payload = start_speech(
+            engine=engine,
+            lang=lang,
+            voice=voice,
+            text=text,
+            reference=ref_path,
+            gpu_busy=JOBS.is_gpu_busy(),
+            acquire_gpu=acquire,
+            release_gpu=release,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return JSONResponse(payload | {"gpu_busy": JOBS.is_gpu_busy()})
+
+
+@app.post("/api/speech/stop")
+def api_speech_stop() -> JSONResponse:
+    return JSONResponse(request_speech_cancel() | {"gpu_busy": JOBS.is_gpu_busy()})
+
+
+@app.get("/api/speech/result")
+def api_speech_result() -> FileResponse:
+    file = speech_result_file()
+    if file is None:
+        raise HTTPException(404, "Речь ещё не готова")
+    return FileResponse(
+        path=str(file),
+        media_type="audio/wav",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/speech/library")
+def api_speech_library(path: str = "") -> JSONResponse:
+    try:
+        return JSONResponse(list_speech_library(path))
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/speech/library/mkdir")
+def api_speech_library_mkdir(body: MusicLibraryMkdirBody) -> JSONResponse:
+    try:
+        return JSONResponse(create_speech_folder(body.path, body.name))
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/speech/library/move")
+def api_speech_library_move(body: MusicLibraryMoveBody) -> JSONResponse:
+    try:
+        return JSONResponse(move_speech_item(body.src, body.dest, body.cwd))
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/speech/library/rename")
+def api_speech_library_rename(body: MusicLibraryRenameBody) -> JSONResponse:
+    try:
+        return JSONResponse(rename_speech_file(body.src, body.name, body.cwd))
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/speech/library/delete")
+def api_speech_library_delete(body: MusicLibraryDeleteBody) -> JSONResponse:
+    try:
+        return JSONResponse(delete_speech_file(body.src, body.cwd))
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/speech/library/record")
+async def api_speech_library_record(file: UploadFile = File(...)) -> JSONResponse:
+    raw = await file.read()
+    try:
+        return JSONResponse(save_speech_recording(raw))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/speech/file")
+def api_speech_file(path: str) -> FileResponse:
+    try:
+        file, mime = speech_file_bytes(path)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return FileResponse(
+        path=str(file),
+        media_type=mime,
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": _inline_audio_disposition(file.name),
+        },
+    )
+
+
+@app.get("/api/music/file")
+def api_music_file(path: str) -> FileResponse:
+    try:
+        file, mime = library_file_bytes(path)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return FileResponse(
+        path=str(file),
+        media_type=mime,
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": _inline_audio_disposition(file.name),
+        },
+    )
+
+
+def run_server() -> None:
+    uvicorn.run(app, host="127.0.0.1", port=SERVER_PORT, log_level="info")
+
+
 def main() -> None:
     _install_quiet_thread_interrupts()
     STATIC.mkdir(parents=True, exist_ok=True)
     get_logger()
-    log_line(f"=== Photo Edit :{SERVER_PORT} ===")
-    print(f"http://127.0.0.1:{SERVER_PORT}")
+    log_line(f"=== {APP_NAME} :{SERVER_PORT} ===")
+    print(f"{APP_NAME}  http://127.0.0.1:{SERVER_PORT}")
+    want_tray = sys.platform == "win32" and os.environ.get("PHOTO_EDIT_NO_TRAY") != "1"
+    if want_tray:
+        from win_tray import (
+            PANEL_URL,
+            acquire_single_instance,
+            kill_self_tree,
+            release_mutex,
+            set_app_id,
+        )
+
+        set_app_id()
+        mutex = acquire_single_instance("Local\\LocalPhotoAiPanel")
+        if mutex is None:
+            import webbrowser
+
+            webbrowser.open(PANEL_URL)
+            return
+
+        def worker() -> None:
+            try:
+                run_server()
+            except Exception:
+                get_logger().exception("server")
+
+        def on_quit() -> None:
+            kill_self_tree()
+
+        threading.Thread(target=worker, name="uvicorn", daemon=True).start()
+        try:
+            from tray_runtime import run_tray_blocking
+
+            run_tray_blocking(on_quit=on_quit)
+        finally:
+            release_mutex(mutex)
+            os._exit(0)
+        return
     try:
-        uvicorn.run(app, host="127.0.0.1", port=SERVER_PORT, log_level="info")
+        run_server()
     except KeyboardInterrupt:
         print("\nОстановлено.")
     finally:
