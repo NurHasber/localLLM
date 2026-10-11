@@ -6,6 +6,7 @@ outputs/
 .cache/
 Music/
 Speech/
+Video/
 models/
 vendor/MOSS-TTS-Nano/models/
 vendor/CosyVoice/pretrained_models/

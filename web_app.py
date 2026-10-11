@@ -66,6 +66,13 @@ from music import (
     start_music,
     stats_boards,
 )
+from video import (
+    VIDEO,
+    catalog as video_catalog,
+    request_video_cancel,
+    result_file as video_result_file,
+    start_video,
+)
 from speech import (
     SPEECH_ROOT,
     catalog as speech_catalog,
@@ -683,6 +690,11 @@ def music_page() -> HTMLResponse:
 @app.get("/speech", response_class=HTMLResponse)
 def speech_page() -> HTMLResponse:
     return _html_page("speech.html")
+
+
+@app.get("/video", response_class=HTMLResponse)
+def video_page() -> HTMLResponse:
+    return _html_page("video.html")
 
 
 @app.get("/api/models")
@@ -1354,6 +1366,77 @@ def _inline_audio_disposition(name: str) -> str:
     if encoded == name:
         return f'inline; filename="{name}"'
     return f"inline; filename*=UTF-8''{encoded}"
+
+
+@app.get("/api/video/catalog")
+def api_video_catalog() -> JSONResponse:
+    return JSONResponse(video_catalog())
+
+
+@app.get("/api/video/status")
+def api_video_status() -> JSONResponse:
+    return JSONResponse(VIDEO.snapshot() | {"gpu_busy": JOBS.is_gpu_busy()})
+
+
+@app.post("/api/video/start")
+async def api_video_start(
+    model_id: str = Form(...),
+    prompt: str = Form(...),
+    seconds: float = Form(3),
+    quality: str = Form("480"),
+    seed: int = Form(42),
+    image: UploadFile | None = File(None),
+) -> JSONResponse:
+    image_path = None
+    if image is not None and image.filename:
+        suffix = Path(image.filename).suffix.lower()
+        if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+            raise HTTPException(400, "Фото: png, jpg или webp")
+        folder = ROOT / "Video" / "_stills"
+        folder.mkdir(parents=True, exist_ok=True)
+        image_path = folder / f"still{suffix}"
+        image_path.write_bytes(await image.read())
+
+    def acquire() -> None:
+        if not JOBS.gpu_lock().acquire(blocking=False):
+            raise RuntimeError("GPU занят — дождитесь другой генерации")
+
+    def release() -> None:
+        try:
+            JOBS.gpu_lock().release()
+        except RuntimeError:
+            pass
+
+    try:
+        payload = start_video(
+            model_id=model_id,
+            prompt=prompt,
+            image=image_path,
+            seconds=seconds,
+            seed=seed,
+            quality=quality,
+            gpu_busy=JOBS.is_gpu_busy(),
+            acquire_gpu=acquire,
+            release_gpu=release,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return JSONResponse(payload | {"gpu_busy": JOBS.is_gpu_busy()})
+
+
+@app.post("/api/video/stop")
+def api_video_stop() -> JSONResponse:
+    return JSONResponse(request_video_cancel() | {"gpu_busy": JOBS.is_gpu_busy()})
+
+
+@app.get("/api/video/result")
+def api_video_result() -> FileResponse:
+    file = video_result_file()
+    if file is None:
+        raise HTTPException(404, "Видео ещё не готово")
+    return FileResponse(path=str(file), media_type="video/mp4", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/speech/catalog")

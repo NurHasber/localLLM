@@ -539,6 +539,12 @@ def _load_moss_local() -> tuple[Any, Any]:
     _status("load", 8, "Снимаю фото и музыку с GPU…")
     release_gpu_vram()
     release_music_models()
+    try:
+        from video import release_video_gpu
+
+        release_video_gpu()
+    except Exception:
+        pass
     _cuda_empty()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
@@ -618,6 +624,12 @@ def _load_cosy() -> Any:
     release_gpu_vram()
     release_music_models()
     release_speech_gpu()
+    try:
+        from video import release_video_gpu
+
+        release_video_gpu()
+    except Exception:
+        pass
     src = str(COSY_SRC)
     matcha = str(COSY_SRC / "third_party" / "Matcha-TTS")
     for path in (src, matcha):

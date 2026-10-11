@@ -612,6 +612,12 @@ def start_music(
                 release_speech_gpu()
             except Exception:
                 pass
+            try:
+                from video import release_video_gpu
+
+                release_video_gpu()
+            except Exception:
+                pass
             acquire_gpu()
             acquired = True
             if aborted():

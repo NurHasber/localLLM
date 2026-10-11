@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Photone — видео</title>
+  <link rel="icon" href="/static/favicon.svg?v=photone" type="image/svg+xml" />
+  <link rel="icon" href="/static/favicon.ico?v=photone" sizes="32x32" />
+  <style>
+    :root {
+      --bg: #0f1117; --panel: #171a22; --border: #2a3040; --text: #e8ecf4;
+      --muted: #8b93a7; --accent: #5b8def; --ok: #3ecf8e; --warn: #e8b84a; --err: #f07178;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    header {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); background: var(--panel);
+    }
+    .header-left { display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
+    header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+    .site-nav { display: flex; gap: 0.85rem; flex-wrap: wrap; }
+    .site-nav a { color: var(--muted); text-decoration: none; }
+    .site-nav a:hover, .site-nav a.active { color: var(--text); font-weight: 600; }
+    .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #252a36; color: var(--muted); }
+    .badge.busy { background: #3d2e14; color: var(--warn); }
+    .badge.ok { background: #1a3328; color: var(--ok); }
+    main { max-width: 980px; margin: 0 auto; padding: 1.25rem; }
+    section {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 1rem 1.1rem 1.15rem; margin-bottom: 1rem;
+    }
+    h2 { margin: 0 0 0.75rem; font-size: 1rem; }
+    p.hint { color: var(--muted); margin: 0 0 0.85rem; font-size: 13px; }
+    label { display: block; margin: 0.5rem 0 0.35rem; color: var(--muted); font-size: 12px; }
+    textarea, select, input[type="number"], input[type="file"] {
+      width: 100%; background: #0f1117; border: 1px solid var(--border); color: var(--text);
+      border-radius: 8px; padding: 0.5rem 0.65rem; font: inherit;
+    }
+    textarea { min-height: 7rem; resize: vertical; }
+    .row { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: flex-end; margin-top: 0.65rem; }
+    .row > * { flex: 1; min-width: 8rem; }
+    button {
+      background: #1e2430; border: 1px solid var(--border); color: var(--text);
+      border-radius: 8px; padding: 0.45rem 0.8rem; font: inherit; cursor: pointer;
+    }
+    button.primary { background: var(--accent); border-color: transparent; color: #fff; }
+    button:disabled { opacity: 0.45; cursor: default; }
+    .bar { height: 6px; background: #12151c; border-radius: 99px; overflow: hidden; margin-top: 0.8rem; }
+    .bar > span { display: block; height: 100%; background: var(--accent); width: 0%; }
+    .err { color: var(--err); white-space: pre-wrap; margin: 0.6rem 0 0; }
+    video { width: 100%; margin-top: 0.7rem; background: #000; border-radius: 8px; }
+    .path { color: var(--muted); font-size: 12px; margin-top: 0.4rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>Photone</h1>
+      <nav class="site-nav">
+        <a href="/">Обработка фото</a>
+        <a href="/sort">Сортировка фото</a>
+        <a href="/generate">Создание фото</a>
+        <a href="/music">AI Sound</a>
+        <a href="/speech">AI Голос</a>
+        <a href="/video" class="active">Видео</a>
+      </nav>
+    </div>
+    <span id="statusBadge" class="badge">загрузка…</span>
+  </header>
+  <main>
+    <section>
+      <h2>Создание видео</h2>
+      <p class="hint" id="modelHint">Короткий ролик 2–5 секунд. Фото необязательно: если приложить кадр, модель его оживляет. Без фото ролик собирается из текста. На 24 ГБ не вместе с фото, музыкой и речью.</p>
+      <label for="modelId">Модель</label>
+      <select id="modelId"></select>
+      <label for="prompt">Что происходит в кадре</label>
+      <textarea id="prompt">Камера медленно подъезжает. На арене затихает рог, пыль оседает в луче света.</textarea>
+      <label for="image">Фото, чтобы оживить — необязательно</label>
+      <input id="image" type="file" accept="image/*,.png,.jpg,.jpeg,.webp" />
+      <div class="row">
+        <div>
+          <label for="seconds">Длина, с</label>
+          <input id="seconds" type="number" min="2" max="5" step="1" value="3" />
+        </div>
+        <div>
+          <label for="quality">Размер</label>
+          <select id="quality">
+            <option value="480">480p — быстрее, влезает</option>
+            <option value="720">720p — Wan и LTX</option>
+          </select>
+        </div>
+        <div>
+          <label for="seed">Seed</label>
+          <input id="seed" type="number" value="42" />
+        </div>
+      </div>
+      <div class="row">
+        <button id="goBtn" class="primary" type="button">Собрать ролик</button>
+        <button id="stopBtn" type="button" disabled>Стоп</button>
+      </div>
+      <div class="bar"><span id="bar"></span></div>
+      <p id="message" class="hint"></p>
+      <p id="error" class="err" hidden></p>
+      <video id="player" controls hidden></video>
+      <div id="saved" class="path"></div>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let models = [];
+    let poll = null;
+
+    function current() {
+      return models.find((item) => item.id === $("modelId").value) || models[0];
+    }
+
+    function fillModels() {
+      const select = $("modelId");
+      const previous = select.value;
+      select.innerHTML = "";
+      models.forEach((item) => {
+        const option = document.createElement("option");
+        option.value = item.id;
+        option.textContent = item.name + " — " + item.vendor + (item.ready ? "" : " — веса скачаются");
+        select.appendChild(option);
+      });
+      if (previous) select.value = previous;
+      const spec = current();
+      if (!spec) return;
+      $("modelHint").textContent = spec.hint + " Веса: " + (spec.size || "") + ". Первый запуск качает их сам.";
+      const quality = $("quality");
+      const lock480 = spec.id === "hunyuan15";
+      quality.value = lock480 ? "480" : quality.value;
+      quality.disabled = lock480;
+    }
+
+    function render(state) {
+      const busy = !!state.busy;
+      $("statusBadge").textContent = busy ? (state.message || "видео") : (state.phase === "error" ? "ошибка" : "готово");
+      $("statusBadge").className = "badge " + (busy ? "busy" : (state.phase === "error" ? "" : "ok"));
+      $("bar").style.width = (state.progress || 0) + "%";
+      $("message").textContent = state.message || "";
+      $("error").hidden = !state.error;
+      $("error").textContent = state.error || "";
+      $("goBtn").disabled = busy;
+      $("stopBtn").disabled = !busy;
+      $("modelId").disabled = busy;
+      if (state.has_result) {
+        const player = $("player");
+        if (player.getAttribute("data-src") !== state.result_name) {
+          player.src = "/api/video/result?t=" + Date.now();
+          player.hidden = false;
+          player.setAttribute("data-src", state.result_name || "1");
+          player.play().catch(() => {});
+        }
+        $("saved").textContent = (state.library_root || "") + (state.result_name ? "\\" + state.result_name : "");
+      }
+      if (busy) ensurePoll(); else stopPoll();
+    }
+
+    async function api(url, options) {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = data.detail;
+        throw new Error(typeof detail === "string" ? detail : (detail ? JSON.stringify(detail) : response.statusText));
+      }
+      return data;
+    }
+
+    function ensurePoll() {
+      if (poll) return;
+      poll = setInterval(() => api("/api/video/status").then(render).catch(() => {}), 1000);
+    }
+    function stopPoll() {
+      if (!poll) return;
+      clearInterval(poll);
+      poll = null;
+    }
+
+    $("modelId").onchange = fillModels;
+    $("goBtn").onclick = async () => {
+      const body = new FormData();
+      body.set("model_id", $("modelId").value);
+      body.set("prompt", $("prompt").value);
+      body.set("seconds", $("seconds").value);
+      body.set("quality", $("quality").value);
+      body.set("seed", $("seed").value);
+      const file = $("image").files && $("image").files[0];
+      if (file) body.set("image", file);
+      $("player").removeAttribute("data-src");
+      try { render(await api("/api/video/start", { method: "POST", body })); }
+      catch (err) {
+        $("error").hidden = false;
+        $("error").textContent = err.message;
+      }
+    };
+    $("stopBtn").onclick = async () => {
+      try { render(await api("/api/video/stop", { method: "POST" })); }
+      catch (err) {
+        $("error").hidden = false;
+        $("error").textContent = err.message;
+      }
+    };
+
+    api("/api/video/catalog").then((data) => {
+      models = data.models || [];
+      fillModels();
+      if (data.library_root) $("saved").textContent = data.library_root;
+    }).catch((err) => {
+      $("error").hidden = false;
+      $("error").textContent = err.message;
+    });
+    api("/api/video/status").then(render).catch(() => {});
+  </script>
+</body>
+</html>

@@ -85,6 +85,21 @@ setup.bat
 
 Если ModelScope недоступен, тот же каталог можно наполнить с Hugging Face, сохранив имя папки `Fun-CosyVoice3-0.5B`.
 
+## Видео
+
+Страница `/video`. Ролики: папка `Video` в корне проекта, в git не входит. Короткий клип 2–5 секунд. Фото на входе оживляет кадр, без фото ролик идёт из текста.
+
+Берите текущую публикацию карточки, не архив с этой машины. На 24 ГБ одновременно с фото, музыкой и речью не запускайте.
+
+| Модель | Откуда | Оценка |
+|---|---|---|
+| Wan 2.2, текст | [Wan-AI/Wan2.2-TI2V-5B-Diffusers](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers) | ~10–15 ГБ |
+| Wan 2.2, оживить фото | [Wan-AI/Wan2.2-I2V-A14B-Diffusers](https://huggingface.co/Wan-AI/Wan2.2-I2V-A14B-Diffusers) | ~30 ГБ |
+| LTX-2.3 | [diffusers/LTX-2.3-Diffusers](https://huggingface.co/diffusers/LTX-2.3-Diffusers) | ~20–40 ГБ |
+| HunyuanVideo 1.5 | [480p t2v](https://huggingface.co/hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v) и [480p i2v](https://huggingface.co/hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_i2v) | ~20–30 ГБ |
+
+Первый запуск выбранной модели качает веса сам.
+
 ## Ollama
 
 Нужна для русского текста в фото, картинках и части музыки. Речь её не требует.
