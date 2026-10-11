@@ -53,7 +53,7 @@ setup.bat
 
 ## Музыка
 
-Страница `/music`. Библиотека треков: `F:\LocalAI\Music` (создаётся сама).
+Страница `/music`. Библиотека треков: папка `Music` в корне проекта (создаётся сама).
 
 | Задача | Откуда брать актуальное | Куда кладётся | Оценка |
 |---|---|---|---|
@@ -65,7 +65,7 @@ setup.bat
 
 ## Речь
 
-Страница `/speech`. Файлы: `F:\LocalAI\Speech`.
+Страница `/speech`. Файлы: папка `Speech` в корне проекта.
 
 | Синтезатор | Откуда брать актуальное | Куда | Оценка |
 |---|---|---|---|
@@ -99,4 +99,4 @@ ollama pull hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M
 
 ## Что не класть в git
 
-`models/`, `.venv/`, `logs/`, `outputs/`, `vendor/CosyVoice/pretrained_models/`, кэш Ollama, библиотеки `F:\LocalAI\Music` и `F:\LocalAI\Speech`.
+`models/`, `.venv/`, `logs/`, `outputs/`, `Music/`, `Speech/`, `vendor/CosyVoice/pretrained_models/`, кэш Ollama.

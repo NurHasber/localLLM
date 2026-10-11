@@ -16,7 +16,7 @@ import portable_env  # noqa: F401
 from audio_library import AudioLibrary
 from portable_env import ROOT
 
-SPEECH_ROOT = Path(r"F:\LocalAI\Speech")
+SPEECH_ROOT = ROOT / "Speech"
 MODEL_ROOT = ROOT / "models" / "speech"
 NANO_SRC = ROOT / "vendor" / "MOSS-TTS-Nano"
 COSY_SRC = ROOT / "vendor" / "CosyVoice"
@@ -75,7 +75,7 @@ PIPER_VOICES = (
 SPEECH_LIB = AudioLibrary(
     SPEECH_ROOT,
     crumb="Speech",
-    outside_label=r"F:\LocalAI\Speech",
+    outside_label="Speech",
     skip_prefixes=(".", "_"),
 )
 
@@ -797,7 +797,7 @@ def speech_file_bytes(rel: str) -> tuple[Path, str]:
 
 
 def save_speech_recording(raw: bytes) -> dict[str, Any]:
-    """Store a microphone take as PCM wav in F:\\LocalAI\\Speech."""
+    """Store a microphone take as PCM wav in the project Speech folder."""
     import io
 
     import numpy as np

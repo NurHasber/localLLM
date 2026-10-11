@@ -4,6 +4,8 @@ __pycache__/
 logs/
 outputs/
 .cache/
+Music/
+Speech/
 models/
 vendor/MOSS-TTS-Nano/models/
 vendor/CosyVoice/pretrained_models/

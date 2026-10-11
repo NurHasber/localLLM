@@ -26,7 +26,7 @@ MOSS_REPO = "OpenMOSS-Team/MOSS-SoundEffect-v2.0"
 ACE_SRC = ROOT / "vendor" / "ACE-Step-1.5"
 ACE_CHECKPOINTS = ROOT / "models" / "acestep"
 MOSS_SRC = ROOT / "vendor" / "MOSS-TTS"
-LIBRARY_ROOT = Path(r"F:\LocalAI\Music")
+LIBRARY_ROOT = ROOT / "Music"
 OUT_DIR = LIBRARY_ROOT
 STATS_PATH = ROOT / "logs" / "music-stats.jsonl"
 COT_CHOICES = ("full", "melody", "off")
@@ -803,7 +803,7 @@ def result_bytes() -> bytes | None:
     return file.read_bytes()
 
 
-_MUSIC_LIB = AudioLibrary(LIBRARY_ROOT, crumb="Music", outside_label=r"F:\LocalAI\Music")
+_MUSIC_LIB = AudioLibrary(LIBRARY_ROOT, crumb="Music", outside_label="Music")
 
 
 def _library_root() -> Path:
@@ -815,7 +815,7 @@ def _library_rel(path: str | Path | None) -> str | None:
 
 
 def resolve_library_path(rel: str | None) -> Path:
-    """Resolve a path inside F:\\LocalAI\\Music. Empty = root."""
+    """Resolve a path inside the project Music folder. Empty = root."""
     return _MUSIC_LIB.resolve(rel)
 
 
